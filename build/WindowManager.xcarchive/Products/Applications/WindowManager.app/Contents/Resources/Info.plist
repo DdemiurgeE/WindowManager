@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<dict>
+		<key>NSAppleEventsUsageDescription</key>
+		<string>This app needs to control other applications to manage window layouts.</string>
+		<key>NSAccessibilityUsageDescription</key>
+		<string>This app needs accessibility access to read and control window positions and sizes.</string>
+		<key>LSMinimumSystemVersion</key>
+		<string>13.0</string>
+		<key>CFBundleName</key>
+		<string>Window Manager</string>
+		<key>CFBundleDisplayName</key>
+		<string>Window Manager</string>
+		<key>CFBundleIdentifier</key>
+		<string>com.yourcompany.windowmanager</string>
+		<key>CFBundleVersion</key>
+		<string>1</string>
+		<key>CFBundleShortVersionString</key>
+		<string>1.0</string>
+	</dict>
+</dict>
+</plist>
