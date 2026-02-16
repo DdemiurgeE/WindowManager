@@ -210,4 +210,15 @@ class WindowService: ObservableObject {
             }
         }
     }
+    func getScreensInfo() -> String {
+        let screens = NSScreen.screens
+        var info = "Detected \(screens.count) screen(s):\n"
+        
+        for (index, screen) in screens.enumerated() {
+            let frame = screen.frame
+            info += "Screen \(index): \(Int(frame.width))x\(Int(frame.height)) at (\(Int(frame.origin.x)), \(Int(frame.origin.y)))\n"
+        }
+        
+        return info
+    }
 }
