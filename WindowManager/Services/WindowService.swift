@@ -221,4 +221,19 @@ class WindowService: ObservableObject {
         
         return info
     }
+    
+    func getCurrentScreenConfiguration() -> ScreenConfiguration {
+        let screens = NSScreen.screens
+        let screenIDs = screens.map { getScreenID(for: $0) }
+        return ScreenConfiguration(screenIDs: screenIDs)
+    }
+    
+    private func getScreenID(for screen: NSScreen) -> String {
+        if let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
+            return "screen_\(screenNumber.intValue)"
+        }
+        
+        let frame = screen.frame
+        return "screen_\(Int(frame.width))x\(Int(frame.height))_\(Int(frame.origin.x))_\(Int(frame.origin.y))"
+    }
 }
