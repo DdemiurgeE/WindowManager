@@ -9,6 +9,7 @@
 import Foundation
 import AppKit
 import Combine
+import UserNotifications
 
 class ScreenMonitorService: ObservableObject {
     static let shared = ScreenMonitorService()
@@ -115,12 +116,56 @@ class ScreenMonitorService: ObservableObject {
     }
     
     private func showNotification(layoutName: String) {
-        let notification = NSUserNotification()
-        notification.title = "Window Manager"
-        notification.informativeText = "Layout '\(layoutName)' applied automatically"
-        notification.soundName = nil
-        
-        NSUserNotificationCenter.default.deliver(notification)
+        let center = UNUserNotificationCenter.current()
+
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                self.deliverNotification(center: center, layoutName: layoutName)
+
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+                    if let error {
+                        print("Notification authorization error: \(error)")
+                        return
+                    }
+
+                    guard granted else {
+                        print("Notification permission not granted")
+                        return
+                    }
+
+                    self.deliverNotification(center: center, layoutName: layoutName)
+                }
+
+            case .denied:
+                // Пользователь запретил уведомления — тихо пропускаем
+                print("Notification permission denied")
+
+            @unknown default:
+                print("Unknown notification authorization status")
+            }
+        }
+    }
+
+    private func deliverNotification(center: UNUserNotificationCenter, layoutName: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Window Manager"
+        content.body = "Layout '\(layoutName)' applied automatically"
+        // Без звука, как и раньше
+        // content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "window_manager.layout_applied",
+            content: content,
+            trigger: nil
+        )
+
+        center.add(request) { error in
+            if let error {
+                print("Failed to deliver notification: \(error)")
+            }
+        }
     }
     
     func updateCurrentScreenConfiguration() {

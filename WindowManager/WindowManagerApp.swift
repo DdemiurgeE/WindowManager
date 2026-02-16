@@ -48,7 +48,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         PermissionsService.shared.checkAllPermissions()
         
         // Раскомментируйте строку ниже, если хотите скрыть иконку из Dock:
-        // NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(.accessory)
     }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
