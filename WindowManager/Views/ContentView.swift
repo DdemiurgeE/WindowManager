@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var windowService: WindowService
     @EnvironmentObject var layoutStorage: LayoutStorageService
+    @StateObject private var screenMonitor = ScreenMonitorService.shared
     @State private var layoutName = ""
     @State private var showingSaveAlert = false
     @State private var screensInfo = ""
@@ -23,6 +24,16 @@ struct ContentView: View {
                     .padding()
                     .background(Color.gray.opacity(0.1))
                     .cornerRadius(8)
+                
+                if let config = screenMonitor.currentScreenConfiguration {
+                    HStack {
+                        Image(systemName: "display.2")
+                            .foregroundColor(.blue)
+                        Text("Auto-apply: \(config.screenCount) screen(s)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             .padding()
             
@@ -55,7 +66,8 @@ struct ContentView: View {
         guard !layoutName.isEmpty else { return }
         
         let windows = windowService.captureCurrentLayout()
-        let layout = Layout(name: layoutName, windows: windows)
+        let screenConfig = windowService.getCurrentScreenConfiguration()
+        let layout = Layout(name: layoutName, windows: windows, screenConfiguration: screenConfig)
         layoutStorage.saveLayout(layout)
         
         layoutName = ""
