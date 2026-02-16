@@ -59,6 +59,11 @@ struct ContentView: View {
         }
         .onAppear {
             updateScreensInfo()
+            
+            // Подписываемся на уведомление от статус-бара
+            NotificationCenter.default.addObserver(forName: NSNotification.Name("ShowSaveLayoutAlert"), object: nil, queue: .main) { _ in
+                showingSaveAlert = true
+            }
         }
     }
     
@@ -69,6 +74,9 @@ struct ContentView: View {
         let screenConfig = windowService.getCurrentScreenConfiguration()
         let layout = Layout(name: layoutName, windows: windows, screenConfiguration: screenConfig)
         layoutStorage.saveLayout(layout)
+        
+        // Обновляем меню в статус-баре
+        StatusBarService.shared.updateMenu()
         
         layoutName = ""
     }

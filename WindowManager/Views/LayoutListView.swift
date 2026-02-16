@@ -67,6 +67,8 @@ struct LayoutListView: View {
         .alert("Delete Layout", isPresented: $showingDeleteConfirmation, presenting: layoutToDelete) { layout in
             Button("Delete", role: .destructive) {
                 layoutStorage.deleteLayout(layout)
+                // Обновляем меню в статус-баре
+                StatusBarService.shared.updateMenu()
             }
             Button("Cancel", role: .cancel) {}
         } message: { layout in

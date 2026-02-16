@@ -1,11 +1,3 @@
-//
-//  StatusBarService.swift
-//  WindowManager
-//
-//  Created by Pavel Palnikov on 16.02.2026.
-//
-
-
 import AppKit
 import SwiftUI
 
@@ -20,13 +12,12 @@ class StatusBarService: NSObject {
         self.windowService = windowService
         self.layoutStorage = layoutStorage
         
-        // Создаем Status Item в системном меню-баре
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         if let button = statusItem?.button {
-            // Используем системную иконку для начала, позже заменим на кастомную
+            // Используем системную иконку. Вы можете заменить её на свою "StatusBarIcon" в Assets
             button.image = NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: "Window Manager")
-            button.image?.isTemplate = true // Позволяет иконке менять цвет под тему (темная/светлая)
+            button.image?.isTemplate = true
         }
         
         updateMenu()
@@ -78,9 +69,7 @@ class StatusBarService: NSObject {
     }
     
     @objc private func saveCurrentLayout() {
-        // Показываем окно для ввода имени
         openMainWindow()
-        // Можно добавить NotificationCenter для вызова алерта в ContentView
         NotificationCenter.default.post(name: NSNotification.Name("ShowSaveLayoutAlert"), object: nil)
     }
     

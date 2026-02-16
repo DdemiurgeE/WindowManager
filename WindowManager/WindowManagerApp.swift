@@ -15,8 +15,6 @@ struct WindowManagerApp: App {
                 .environmentObject(layoutStorage)
                 .frame(minWidth: 600, minHeight: 400)
                 .onAppear {
-                    // Передаем зависимости в AppDelegate, если нужно,
-                    // или инициализируем сервисы здесь
                     setupServices()
                 }
         }
@@ -37,7 +35,7 @@ struct WindowManagerApp: App {
             layoutStorage: layoutStorage
         )
         
-        // Инициализируем мониторинг экранов (авто-применение)
+        // Инициализируем мониторинг экранов
         ScreenMonitorService.shared.setup(
             layoutStorage: layoutStorage,
             windowService: windowService
@@ -47,16 +45,14 @@ struct WindowManagerApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Проверка разрешений при запуске
         PermissionsService.shared.checkAllPermissions()
         
-        // Если вы хотите, чтобы приложение работало ТОЛЬКО в Menu Bar (без иконки в Dock),
-        // раскомментируйте строку ниже:
+        // Раскомментируйте строку ниже, если хотите скрыть иконку из Dock:
         // NSApp.setActivationPolicy(.accessory)
     }
     
-    // Добавим метод, чтобы приложение не закрывалось полностью при закрытии окна
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // Приложение продолжает работать в Menu Bar после закрытия окна
         return false
     }
 }
