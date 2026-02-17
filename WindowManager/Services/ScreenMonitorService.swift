@@ -78,6 +78,13 @@ class ScreenMonitorService: ObservableObject {
     }
     
     private func applyLayoutForCurrentConfiguration() {
+        // Проверяем, включен ли auto-apply
+        let autoApplyEnabled = UserDefaults.standard.object(forKey: "autoApplyEnabled") as? Bool ?? true
+        guard autoApplyEnabled else {
+            print("Auto-apply is disabled, skipping")
+            return
+        }
+        
         guard let currentConfig = currentScreenConfiguration,
               let layoutStorage = layoutStorageService,
               let windowService = windowService else {

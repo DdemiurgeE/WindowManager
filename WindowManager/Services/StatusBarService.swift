@@ -57,12 +57,21 @@ class StatusBarService: NSObject, NSMenuDelegate {
         
         menu.addItem(NSMenuItem.separator())
         
-        // 3. Пункт "Open Window"
+        // 3. Пункт "Auto-apply Layouts"
+        let autoApplyEnabled = UserDefaults.standard.object(forKey: "autoApplyEnabled") as? Bool ?? true
+        let autoApplyItem = NSMenuItem(title: "Auto-apply Layouts", action: #selector(toggleAutoApply), keyEquivalent: "")
+        autoApplyItem.target = self
+        autoApplyItem.state = autoApplyEnabled ? .on : .off
+        menu.addItem(autoApplyItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        // 4. Пункт "Open Window"
         let openWindowItem = NSMenuItem(title: "Open Window", action: #selector(openMainWindow), keyEquivalent: "o")
         openWindowItem.target = self
         menu.addItem(openWindowItem)
         
-        // 4. Пункт "Quit"
+        // 5. Пункт "Quit"
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -85,6 +94,17 @@ class StatusBarService: NSObject, NSMenuDelegate {
         print("StatusBarService: Applying layout '\(layout.name)'")
         windowService?.restoreLayout(layout)
         layoutStorage?.markLayoutAsUsed(layout)
+    }
+    
+    @objc private func toggleAutoApply() {
+        print("StatusBarService: toggleAutoApply called")
+        let currentValue = UserDefaults.standard.object(forKey: "autoApplyEnabled") as? Bool ?? true
+        let newValue = !currentValue
+        UserDefaults.standard.set(newValue, forKey: "autoApplyEnabled")
+        print("StatusBarService: Auto-apply set to \(newValue)")
+        
+        // Обновляем меню для отображения нового состояния
+        updateMenu()
     }
     
     @objc private func saveCurrentLayout() {

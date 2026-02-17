@@ -24,6 +24,7 @@ struct ContentView: View {
     @EnvironmentObject var windowService: WindowService
     @EnvironmentObject var layoutStorage: LayoutStorageService
     @StateObject private var screenMonitor = ScreenMonitorService.shared
+    @AppStorage("autoApplyEnabled") private var autoApplyEnabled = true
     @State private var layoutName = ""
     @State private var showingSaveAlert = false
     @State private var screenDetails: [ScreenDetailInfo] = []
@@ -123,17 +124,20 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
 
-                if let config = screenMonitor.currentScreenConfiguration {
+                // Auto-apply toggle
+                Toggle(isOn: $autoApplyEnabled) {
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.subheadline)
-                            .foregroundColor(.green)
-                        Text("Auto-apply enabled")
+                            .foregroundColor(autoApplyEnabled ? .green : .gray)
+                        Text("Auto-apply")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .center)
                 }
+                .toggleStyle(.switch)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 40)
             }
 
             Spacer()
