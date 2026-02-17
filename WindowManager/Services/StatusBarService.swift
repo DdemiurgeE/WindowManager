@@ -1,12 +1,13 @@
 import AppKit
 import SwiftUI
 
-class StatusBarService: NSObject {
+class StatusBarService: NSObject, NSMenuDelegate {
     static let shared = StatusBarService()
     
     private var statusItem: NSStatusItem?
     private var windowService: WindowService?
     private var layoutStorage: LayoutStorageService?
+    private var menu: NSMenu?
     
     func setup(windowService: WindowService, layoutStorage: LayoutStorageService) {
         self.windowService = windowService
@@ -20,11 +21,19 @@ class StatusBarService: NSObject {
             button.image?.isTemplate = true
         }
         
+        // Создаем меню и устанавливаем делегат
+        menu = NSMenu()
+        menu?.delegate = self
+        statusItem?.menu = menu
+        
         updateMenu()
     }
     
     func updateMenu() {
-        let menu = NSMenu()
+        guard let menu = menu else { return }
+        
+        // Очищаем существующее меню
+        menu.removeAllItems()
         
         // 1. Список сохраненных Layout
         if let layouts = layoutStorage?.layouts, !layouts.isEmpty {
@@ -57,30 +66,57 @@ class StatusBarService: NSObject {
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
-        
-        statusItem?.menu = menu
+    }
+    
+    // MARK: - NSMenuDelegate
+    
+    func menuWillOpen(_ menu: NSMenu) {
+        // Обновляем меню каждый раз перед открытием
+        updateMenu()
     }
     
     @objc private func applyLayout(_ sender: NSMenuItem) {
-        if let layout = sender.representedObject as? Layout {
-            windowService?.restoreLayout(layout)
-            layoutStorage?.markLayoutAsUsed(layout)
+        print("StatusBarService: applyLayout called")
+        guard let layout = sender.representedObject as? Layout else {
+            print("StatusBarService: No layout found in representedObject")
+            return
         }
+        
+        print("StatusBarService: Applying layout '\(layout.name)'")
+        windowService?.restoreLayout(layout)
+        layoutStorage?.markLayoutAsUsed(layout)
     }
     
     @objc private func saveCurrentLayout() {
+        print("StatusBarService: saveCurrentLayout called")
         openMainWindow()
-        NotificationCenter.default.post(name: NSNotification.Name("ShowSaveLayoutAlert"), object: nil)
+        
+        // Небольшая задержка, чтобы окно успело открыться
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NotificationCenter.default.post(name: NSNotification.Name("ShowSaveLayoutAlert"), object: nil)
+        }
     }
     
     @objc private func openMainWindow() {
+        print("StatusBarService: openMainWindow called")
         NSApp.activate(ignoringOtherApps: true)
+        
+        // Ищем главное окно приложения
+        for window in NSApp.windows {
+            if window.title.contains("Window Manager") || window.contentViewController != nil {
+                window.makeKeyAndOrderFront(nil)
+                return
+            }
+        }
+        
+        // Если окно не найдено, пытаемся открыть первое доступное
         if let window = NSApp.windows.first {
             window.makeKeyAndOrderFront(nil)
         }
     }
     
     @objc private func quitApp() {
+        print("StatusBarService: quitApp called")
         NSApplication.shared.terminate(nil)
     }
 }
