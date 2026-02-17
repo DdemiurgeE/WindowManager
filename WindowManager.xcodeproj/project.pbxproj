@@ -10,9 +10,22 @@
 		DD1502142F321B200009A56D /* WindowManager.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WindowManager.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		DDD08C5B2F446BF700381595 /* Exceptions for "WindowManager" folder in "WindowManager" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = DD1502132F321B200009A56D /* WindowManager */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		DD1502162F321B200009A56D /* WindowManager */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				DDD08C5B2F446BF700381595 /* Exceptions for "WindowManager" folder in "WindowManager" target */,
+			);
 			path = WindowManager;
 			sourceTree = "<group>";
 		};
