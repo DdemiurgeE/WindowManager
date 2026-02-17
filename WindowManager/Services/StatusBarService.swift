@@ -119,19 +119,27 @@ class StatusBarService: NSObject, NSMenuDelegate {
     
     @objc private func openMainWindow() {
         print("StatusBarService: openMainWindow called")
-        NSApp.activate(ignoringOtherApps: true)
         
-        // Ищем главное окно приложения
-        for window in NSApp.windows {
-            if window.title.contains("Window Manager") || window.contentViewController != nil {
-                window.makeKeyAndOrderFront(nil)
-                return
-            }
+        // Ищем все окна приложения
+        let appWindows = NSApp.windows.filter { window in
+            return window.canBecomeKey &&
+                   window.contentViewController != nil
         }
         
-        // Если окно не найдено, пытаемся открыть первое доступное
-        if let window = NSApp.windows.first {
+        if let window = appWindows.first {
+            // Если окно свернуто, разворачиваем его
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
+            // Делаем окно активным
             window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+            NSApp.activate(ignoringOtherApps: true)
+        } else {
+            // Если окон нет, вызываем метод AppDelegate
+            if let appDelegate = NSApp.delegate as? AppDelegate {
+                appDelegate.openOrCreateMainWindow()
+            }
         }
     }
     
