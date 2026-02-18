@@ -19,7 +19,9 @@ class WindowService: ObservableObject {
         let screens = NSScreen.screens
         
         for app in runningApps {
-            guard app.activationPolicy == .regular else { continue }
+            guard app.activationPolicy == .regular,
+                  app.processIdentifier > 0,
+                  !app.isTerminated else { continue }
             
             let appRef = AXUIElementCreateApplication(app.processIdentifier)
             var windowsRef: CFTypeRef?
@@ -42,6 +44,36 @@ class WindowService: ObservableObject {
         return windows
     }
     
+    /// Высота главного экрана — база системы координат AX/Quartz.
+    /// NSScreen.main — экран с активной строкой меню.
+    private var mainScreenHeight: CGFloat {
+        (NSScreen.main ?? NSScreen.screens[0]).frame.height
+    }
+
+    /// Конвертирует NSScreen-frame окна в AX/Quartz origin (top-left угол окна).
+    /// NSScreen: origin = нижний-левый угол NSScreen.main, Y вверх.
+    /// AX/Quartz: origin = верхний-левый угол NSScreen.main, Y вниз.
+    ///
+    /// Формула: axY = mainScreenHeight - screenY - windowHeight
+    private func screenFrameToAXOrigin(_ frame: CGRect) -> CGPoint {
+        let h = mainScreenHeight
+        return CGPoint(
+            x: frame.origin.x,
+            y: h - frame.origin.y - frame.size.height
+        )
+    }
+
+    /// Конвертирует AX/Quartz позицию + размер в NSScreen-frame.
+    private func axOriginToScreenFrame(axOrigin: CGPoint, size: CGSize) -> CGRect {
+        let h = mainScreenHeight
+        return CGRect(
+            x: axOrigin.x,
+            y: h - axOrigin.y - size.height,
+            width: size.width,
+            height: size.height
+        )
+    }
+
     private func getWindowInfo(from windowElement: AXUIElement, appName: String, screens: [NSScreen]) -> WindowInfo? {
         var titleRef: CFTypeRef?
         var positionRef: CFTypeRef?
@@ -51,11 +83,12 @@ class WindowService: ObservableObject {
         AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef)
         let title = titleRef as? String ?? "Untitled"
         
-        // Получаем позицию
+        // Получаем позицию в пространстве AX/Quartz:
+        //   origin = верхний-левый угол ГЛАВНОГО экрана (NSScreen.main), Y растёт вниз.
         AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &positionRef)
-        var position = CGPoint.zero
+        var axPosition = CGPoint.zero
         if let positionValue = positionRef {
-            AXValueGetValue(positionValue as! AXValue, .cgPoint, &position)
+            AXValueGetValue(positionValue as! AXValue, .cgPoint, &axPosition)
         }
         
         // Получаем размер
@@ -65,57 +98,50 @@ class WindowService: ObservableObject {
             AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
         }
         
-        // Санитизация: проверяем, что координаты и размеры в разумных пределах
-        // Игнорируем окна с нулевым или слишком маленьким размером
-        guard size.width >= 50 && size.height >= 50 else {
+        guard size.width >= 50 && size.height >= 50 else { return nil }
+
+        // Конвертируем AX/Quartz → NSScreen (абсолютные координаты)
+        let screenFrame = axOriginToScreenFrame(axOrigin: axPosition, size: CGSize(width: max(size.width, 100), height: max(size.height, 100)))
+
+        // Отсеиваем окна полностью вне всех экранов
+        let allScreensUnion = screens.reduce(CGRect.null) { $0.union($1.frame) }
+        guard screenFrame.intersects(allScreensUnion) else {
+            print("Skipping window '\(title)' - outside screen bounds (ax: \(axPosition), screen: \(screenFrame))")
             return nil
         }
-        
-        // Проверяем, что координаты не выходят за пределы всех экранов
-        // Находим общие границы всех экранов
-        var minX: CGFloat = 0
-        var minY: CGFloat = 0
-        var maxX: CGFloat = 0
-        var maxY: CGFloat = 0
-        
-        for screen in screens {
-            let frame = screen.frame
-            minX = min(minX, frame.origin.x)
-            minY = min(minY, frame.origin.y)
-            maxX = max(maxX, frame.origin.x + frame.width)
-            maxY = max(maxY, frame.origin.y + frame.height)
-        }
-        
-        // Если окно полностью за пределами всех экранов, игнорируем его
-        let windowMaxX = position.x + size.width
-        let windowMaxY = position.y + size.height
-        
-        if windowMaxX < minX || position.x > maxX || windowMaxY < minY || position.y > maxY {
-            print("Skipping window '\(title)' - outside screen bounds")
-            return nil
-        }
-        
-        // Создаем frame с санитизированными значениями
-        let sanitizedFrame = CGRect(
-            x: position.x,
-            y: position.y,
-            width: max(size.width, 100),  // Минимальная ширина
-            height: max(size.height, 100) // Минимальная высота
+
+        let screenIndex = self.getScreenIndex(for: screenFrame, screens: screens)
+
+        // Вычисляем relativeFrame — позицию окна относительно его экрана.
+        // Это позволяет корректно восстановить позицию даже если macOS
+        // изменила абсолютное расположение мониторов (что происходит при каждом переподключении).
+        let targetScreen = screens[screenIndex]
+        let relativeFrame = CGRect(
+            x: (screenFrame.origin.x - targetScreen.frame.origin.x) / targetScreen.frame.width,
+            y: (screenFrame.origin.y - targetScreen.frame.origin.y) / targetScreen.frame.height,
+            width: screenFrame.width / targetScreen.frame.width,
+            height: screenFrame.height / targetScreen.frame.height
         )
-        
-        // Определяем индекс экрана
-        let screenIndex = self.getScreenIndex(for: sanitizedFrame, screens: screens)
-        
-        return WindowInfo(appName: appName, windowTitle: title, frame: sanitizedFrame, screenIndex: screenIndex)
+
+        print("Captured '\(title)' on screen \(screenIndex) [relative=\(relativeFrame)]")
+        return WindowInfo(appName: appName, windowTitle: title, frame: screenFrame, screenIndex: screenIndex, relativeFrame: relativeFrame)
     }
     
     private func getScreenIndex(for frame: CGRect, screens: [NSScreen]) -> Int {
+        // Находим экран с максимальной площадью пересечения с окном
+        var bestIndex = 0
+        var bestArea: CGFloat = 0
+
         for (index, screen) in screens.enumerated() {
-            if screen.frame.intersects(frame) {
-                return index
+            let intersection = screen.frame.intersection(frame)
+            guard !intersection.isNull else { continue }
+            let area = intersection.width * intersection.height
+            if area > bestArea {
+                bestArea = area
+                bestIndex = index
             }
         }
-        return 0
+        return bestIndex
     }
     
     func restoreLayout(_ layout: Layout) {
@@ -128,18 +154,15 @@ class WindowService: ObservableObject {
         let screens = NSScreen.screens
         
         print("=== Restoring layout: \(layout.name) ===")
-        print("Available screens: \(screens.count)")
         for (index, screen) in screens.enumerated() {
-            print("Screen \(index): \(screen.frame)")
+            print("Screen \(index): frame=\(screen.frame)")
         }
         
         for windowInfo in layout.windows {
-            print("\nRestoring: \(windowInfo.appName) - \(windowInfo.windowTitle)")
-            print("Target frame: \(windowInfo.frame)")
-            print("Target screen: \(windowInfo.screenIndex)")
-            // Находим приложение
+            let targetFrame = resolveTargetFrame(for: windowInfo, screens: screens)
+
             guard let app = runningApps.first(where: { $0.localizedName == windowInfo.appName }) else {
-                print("App not found: \(windowInfo.appName)")
+                print("  App not found: \(windowInfo.appName)")
                 continue
             }
             
@@ -149,63 +172,95 @@ class WindowService: ObservableObject {
             let result = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsRef)
             
             if result == .success, let windowArray = windowsRef as? [AXUIElement] {
-                // Ищем окно по заголовку
                 for windowElement in windowArray {
                     var titleRef: CFTypeRef?
                     AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef)
                     let title = titleRef as? String ?? ""
                     
                     if title == windowInfo.windowTitle || windowArray.count == 1 {
-                        // Восстанавливаем позицию и размер
-                        self.setWindowFrame(windowElement, frame: windowInfo.frame)
+                        self.setWindowFrame(windowElement, frame: targetFrame, debugName: "\(windowInfo.appName) — \(title)")
                         break
                     }
                 }
             }
         }
     }
+
+    /// Вычисляет абсолютный targetFrame для окна при восстановлении.
+    ///
+    /// Алгоритм:
+    /// 1. Если есть relativeFrame — пересчитываем через текущее положение экрана с нужным screenIndex.
+    /// 2. Если screenIndex вышел за пределы (мониторов стало меньше) — ищем наиболее похожий экран
+    ///    по разрешению среди доступных.
+    /// 3. Fallback — используем абсолютный frame как есть (для старых лэйаутов).
+    private func resolveTargetFrame(for windowInfo: WindowInfo, screens: [NSScreen]) -> CGRect {
+        guard let relativeFrame = windowInfo.relativeFrame else {
+            return windowInfo.frame
+        }
+
+        // Определяем целевой экран: предпочитаем сохранённый screenIndex,
+        // но если он недоступен — берём последний из доступных.
+        let screenIndex = min(windowInfo.screenIndex, screens.count - 1)
+        let screen = screens[screenIndex]
+
+        return CGRect(
+            x: screen.frame.origin.x + relativeFrame.origin.x * screen.frame.width,
+            y: screen.frame.origin.y + relativeFrame.origin.y * screen.frame.height,
+            width: relativeFrame.width * screen.frame.width,
+            height: relativeFrame.height * screen.frame.height
+        )
+    }
     
-    private func setWindowFrame(_ windowElement: AXUIElement, frame: CGRect) {
-        // 1. Сначала устанавливаем размер
+    private func setWindowFrame(_ windowElement: AXUIElement, frame: CGRect, debugName: String = "") {
+        let axPosition = screenFrameToAXOrigin(frame)
         var size = frame.size
+        var pos = axPosition
+
+        // Устанавливаем позицию и размер дважды — сначала позицию, потом размер, потом снова позицию.
+        // Это нужно потому что некоторые приложения (например Finder) клипают размер,
+        // что смещает позицию окна. Повторная установка позиции после размера это исправляет.
+
+        // 1. Позиция (первый раз — чтобы окно оказалось в нужном месте до изменения размера)
+        if let posValue = AXValueCreate(.cgPoint, &pos) {
+            AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, posValue)
+        }
+
+        usleep(50_000) // 50ms
+
+        // 2. Размер
         if let sizeValue = AXValueCreate(.cgSize, &size) {
             AXUIElementSetAttributeValue(windowElement, kAXSizeAttribute as CFString, sizeValue)
         }
-        
-        // Небольшая пауза, чтобы система успела обработать изменение размера
-        usleep(50000) // 50ms
-        
-        // 2. Устанавливаем позицию
-        var position = frame.origin
-        if let positionValue = AXValueCreate(.cgPoint, &position) {
-            let result = AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, positionValue)
-            
-            // Если не удалось с первого раза, пробуем еще раз
+
+        usleep(50_000) // 50ms
+
+        // 3. Позиция повторно — на случай если изменение размера сдвинуло окно
+        if let posValue = AXValueCreate(.cgPoint, &pos) {
+            let result = AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, posValue)
             if result != .success {
-                print("Failed to set position on first attempt, retrying...")
-                usleep(100000) // 100ms
-                AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, positionValue)
+                usleep(100_000)
+                AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, posValue)
             }
         }
-        
-        // 3. Финальная проверка и коррекция (для упрямых окон)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            var currentPositionRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &currentPositionRef)
-            
-            if let currentPosValue = currentPositionRef {
-                var currentPos = CGPoint.zero
-                AXValueGetValue(currentPosValue as! AXValue, .cgPoint, &currentPos)
-                
-                // Если позиция отличается больше чем на 10 пикселей, пробуем еще раз
-                let deltaX = abs(currentPos.x - position.x)
-                let deltaY = abs(currentPos.y - position.y)
-                
-                if deltaX > 10 || deltaY > 10 {
-                    print("Window drifted by (\(deltaX), \(deltaY)), correcting...")
-                    if let posValue = AXValueCreate(.cgPoint, &position) {
-                        AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, posValue)
-                    }
+
+        // 4. Проверка через 0.5с
+        let capturedElement = windowElement
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            var currentPosRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(capturedElement, kAXPositionAttribute as CFString, &currentPosRef)
+            guard let currentPosValue = currentPosRef else { return }
+
+            var currentPos = CGPoint.zero
+            AXValueGetValue(currentPosValue as! AXValue, .cgPoint, &currentPos)
+
+            let deltaX = abs(currentPos.x - axPosition.x)
+            let deltaY = abs(currentPos.y - axPosition.y)
+
+            if deltaX > 2 || deltaY > 2 {
+                print("⚠️ [\(debugName)] Drift (\(Int(deltaX)),\(Int(deltaY))), correcting...")
+                var corrPos = axPosition
+                if let posValue = AXValueCreate(.cgPoint, &corrPos) {
+                    AXUIElementSetAttributeValue(capturedElement, kAXPositionAttribute as CFString, posValue)
                 }
             }
         }
