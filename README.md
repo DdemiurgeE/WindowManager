@@ -1,76 +1,78 @@
 # WindowManager
 
-WindowManager — macOS-приложение на SwiftUI для сохранения и восстановления раскладок окон на одном или нескольких дисплеях. Приложение живёт в Menu Bar, умеет запоминать текущие позиции и размеры окон, применять сохранённые раскладки вручную и автоматически восстанавливать подходящую раскладку при изменении конфигурации экранов.
+WindowManager is a SwiftUI macOS application for saving and restoring window layouts across one or more displays. The app lives in the Menu Bar, can remember current window positions and sizes, lets you apply saved layouts manually, and can automatically restore a matching layout when the display configuration changes.
 
-## Что делает приложение
+> Russian version: [`README.ru.md`](README.ru.md)
 
-- Показывает текущую конфигурацию дисплеев: количество экранов, основной дисплей и разрешения.
-- Захватывает список открытых окон обычных macOS-приложений через Accessibility API.
-- Сохраняет для каждого окна:
-  - имя приложения;
-  - заголовок окна;
-  - абсолютный `CGRect`;
-  - индекс дисплея;
-  - нормализованный `relativeFrame` относительно дисплея;
-  - время захвата.
-- Хранит пользовательские раскладки в `UserDefaults` под ключом `SavedLayouts`.
-- Восстанавливает позиции и размеры окон через `AXUIElementSetAttributeValue`.
-- Поддерживает Menu Bar-меню с быстрыми действиями:
-  - применить сохранённую раскладку;
-  - сохранить текущую раскладку;
-  - включить/выключить Auto-apply;
-  - открыть главное окно;
-  - выйти из приложения.
-- Отслеживает изменения конфигурации экранов и, если Auto-apply включён, применяет последнюю использованную раскладку для совпадающей конфигурации.
-- Показывает системное уведомление после автоматического применения раскладки.
+## What the app does
 
-## Основные сценарии использования
+- Shows the current display configuration: number of displays, primary display, and resolutions.
+- Captures the list of open windows from regular macOS applications via the Accessibility API.
+- Stores the following for each window:
+  - application name;
+  - window title;
+  - absolute `CGRect`;
+  - display index;
+  - normalized `relativeFrame` relative to the display;
+  - capture timestamp.
+- Stores user layouts in `UserDefaults` under the `SavedLayouts` key.
+- Restores window positions and sizes via `AXUIElementSetAttributeValue`.
+- Provides a Menu Bar menu with quick actions:
+  - apply a saved layout;
+  - save the current layout;
+  - enable/disable Auto-apply;
+  - open the main window;
+  - quit the app.
+- Monitors display configuration changes and, when Auto-apply is enabled, applies the most recently used layout that matches the current configuration.
+- Shows a system notification after automatically applying a layout.
 
-### 1. Первичная настройка разрешений
+## Main usage scenarios
 
-Для работы приложению нужны системные разрешения macOS:
+### 1. Initial permission setup
 
-1. **Accessibility** — чтение и управление позициями окон.
-2. **Screen Recording** — доступ к информации об окнах.
+The app needs macOS system permissions to work:
 
-Откройте настройки приложения или системные настройки macOS:
+1. **Accessibility** — required to read and control window positions.
+2. **Screen Recording** — required to access window information.
+
+Open the app settings or macOS System Settings:
 
 - `System Settings → Privacy & Security → Accessibility`
 - `System Settings → Privacy & Security → Screen Recording`
 
-Добавьте WindowManager в оба списка и перезапустите приложение, если macOS попросит это сделать.
+Add WindowManager to both lists and restart the app if macOS asks you to do so.
 
-### 2. Сохранение раскладки
+### 2. Saving a layout
 
-1. Расставьте окна так, как нужно.
-2. Нажмите **Save Current Layout** в главном окне или выберите **Save Current Layout...** в Menu Bar.
-3. Проверьте список найденных окон.
-4. Введите имя раскладки.
-5. Нажмите **Save Layout**.
+1. Arrange your windows the way you want.
+2. Click **Save Current Layout** in the main window or choose **Save Current Layout...** from the Menu Bar.
+3. Review the detected windows.
+4. Enter a layout name.
+5. Click **Save Layout**.
 
-### 3. Восстановление раскладки
+### 3. Restoring a layout
 
-- В главном окне нажмите кнопку восстановления у нужной раскладки.
-- Или выберите имя раскладки в Menu Bar-меню.
+- In the main window, click the restore button for the desired layout.
+- Or choose the layout name from the Menu Bar menu.
 
-Приложение найдёт запущенные приложения по `localizedName`, затем попытается сопоставить окна по заголовку. Если у приложения только одно окно, оно будет использовано даже без точного совпадения заголовка.
+The app finds running applications by `localizedName`, then tries to match windows by title. If an application has only one window, that window is used even without an exact title match.
 
-### 4. Автоматическое применение
+### 4. Automatic application
 
-Когда меняется конфигурация дисплеев, например подключается или отключается монитор, `ScreenMonitorService` ищет сохранённые раскладки с такой же `ScreenConfiguration`. Если Auto-apply включён, применяется самая недавно использованная подходящая раскладка.
+When the display configuration changes, for example when a monitor is connected or disconnected, `ScreenMonitorService` looks for saved layouts with the same `ScreenConfiguration`. If Auto-apply is enabled, the most recently used matching layout is applied.
 
-Auto-apply можно переключить:
+Auto-apply can be toggled:
 
-- в главном окне через переключатель **Auto-apply**;
-- в Menu Bar через пункт **Auto-apply Layouts**.
+- in the main window via the **Auto-apply** switch;
+- in the Menu Bar via **Auto-apply Layouts**.
 
-## Требования
+## Requirements
 
-- macOS с поддержкой SwiftUI/AppKit и Accessibility API.
+- macOS with SwiftUI/AppKit and Accessibility API support.
 - Xcode.
-- Разрешения Accessibility и Screen Recording.
+- Accessibility and Screen Recording permissions.
 
-Текущие настройки проекта:
+Current project settings:
 
 - Target: `WindowManager`
 - Scheme: `WindowManager`
@@ -79,7 +81,7 @@ Auto-apply можно переключить:
 - Marketing version: `2.3`
 - macOS deployment target: `26.2`
 
-## Сборка из исходников
+## Building from source
 
 ```bash
 xcodebuild \
@@ -90,7 +92,7 @@ xcodebuild \
   build
 ```
 
-Release-сборка:
+Release build:
 
 ```bash
 xcodebuild \
@@ -101,39 +103,41 @@ xcodebuild \
   build
 ```
 
-## Структура проекта
+## Project structure
 
 ```text
 WindowManager/
-├── WindowManagerApp.swift          # Точка входа, AppDelegate, инициализация сервисов
-├── Info.plist                      # Иконка приложения
+├── WindowManagerApp.swift          # Entry point, AppDelegate, service initialization
+├── Info.plist                      # App icon configuration
 ├── Models/
-│   ├── Layout.swift                # Модель раскладки и конфигурации экранов
-│   └── WindowInfo.swift            # Модель сохранённого окна
+│   ├── Layout.swift                # Layout and display configuration model
+│   └── WindowInfo.swift            # Saved window model
 ├── Services/
-│   ├── WindowService.swift         # Захват и восстановление окон через AX API
-│   ├── LayoutStorageService.swift  # Сохранение раскладок в UserDefaults
-│   ├── PermissionsService.swift    # Проверка/запрос разрешений macOS
-│   ├── ScreenMonitorService.swift  # Мониторинг экранов и Auto-apply
-│   └── StatusBarService.swift      # Menu Bar-интеграция
+│   ├── WindowService.swift         # Captures and restores windows via AX API
+│   ├── LayoutStorageService.swift  # Persists layouts in UserDefaults
+│   ├── PermissionsService.swift    # Checks/requests macOS permissions
+│   ├── ScreenMonitorService.swift  # Display monitoring and Auto-apply
+│   └── StatusBarService.swift      # Menu Bar integration
 └── Views/
-    ├── ContentView.swift           # Главное окно
-    ├── LayoutListView.swift        # Список сохранённых раскладок
-    └── PermissionsView.swift       # Экран разрешений
+    ├── ContentView.swift           # Main window
+    ├── LayoutListView.swift        # Saved layouts list
+    └── PermissionsView.swift       # Permissions screen
 ```
 
-## Документация
+## Documentation
 
-Подробное описание архитектуры, моделей, сервисов и ограничений находится в [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Detailed architecture, model, service, and limitation documentation is available in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-## Известные ограничения
+Russian documentation is available in [`docs/ARCHITECTURE.ru.md`](docs/ARCHITECTURE.ru.md).
 
-- Приложения должны быть запущены: WindowManager не запускает отсутствующие приложения при восстановлении раскладки.
-- Сопоставление окон зависит от имени приложения и заголовка окна. Если заголовки динамические, точность восстановления может снижаться.
-- Некоторые приложения могут ограничивать изменение размера или позиции своих окон через Accessibility API.
-- Для корректной работы после изменения разрешений macOS приложение может потребовать перезапуск.
-- Сохранённые раскладки хранятся локально в `UserDefaults`, без синхронизации и экспорта.
+## Known limitations
 
-## Репозиторий
+- Applications must already be running: WindowManager does not launch missing applications when restoring a layout.
+- Window matching depends on the application name and window title. Dynamic titles can reduce restore accuracy.
+- Some applications may restrict changing their window size or position via the Accessibility API.
+- The app may need to be restarted after macOS permission changes.
+- Saved layouts are stored locally in `UserDefaults`; there is no sync or export mechanism yet.
+
+## Repository
 
 https://github.com/DdemiurgeE/WindowManager

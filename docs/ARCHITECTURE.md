@@ -1,19 +1,21 @@
-# Архитектура WindowManager
+# WindowManager Architecture
 
-Документ описывает устройство текущего приложения WindowManager, его основные сервисы, модели данных и поток выполнения пользовательских сценариев.
+This document describes the current WindowManager application structure, its main services, data models, and user-scenario execution flow.
 
-## Назначение
+> Russian version: [`ARCHITECTURE.ru.md`](ARCHITECTURE.ru.md)
 
-WindowManager автоматизирует восстановление рабочих раскладок окон на macOS. Основная задача — быстро вернуть окна приложений на нужные дисплеи и в нужные позиции после переподключения мониторов, смены рабочего места или ручной перестановки окон.
+## Purpose
 
-Приложение построено как SwiftUI + AppKit macOS app:
+WindowManager automates restoring workspace window layouts on macOS. Its primary goal is to quickly return application windows to the right displays and positions after reconnecting monitors, switching workstations, or manually rearranging windows.
 
-- SwiftUI отвечает за главное окно, список раскладок и экран разрешений.
-- AppKit используется для Menu Bar, работы с окнами приложения и системными экранами.
-- Accessibility API (`ApplicationServices`) используется для чтения и изменения позиций окон сторонних приложений.
-- `UserDefaults` используется как локальное хранилище сохранённых раскладок.
+The application is built as a SwiftUI + AppKit macOS app:
 
-## Высокоуровневая схема
+- SwiftUI handles the main window, saved-layout list, and permissions screen.
+- AppKit is used for Menu Bar integration, application-window handling, and system display access.
+- Accessibility API (`ApplicationServices`) is used to read and change positions of windows belonging to other applications.
+- `UserDefaults` is used as the local storage for saved layouts.
+
+## High-level structure
 
 ```text
 WindowManagerApp
@@ -29,7 +31,7 @@ WindowManagerApp
 └── PermissionsService
 ```
 
-Потоки данных:
+Data flows:
 
 ```text
 Save Current Layout
@@ -67,49 +69,49 @@ Restore most recently used matching layout
 User notification
 ```
 
-## Точка входа
+## Entry point
 
-Файл: `WindowManager/WindowManagerApp.swift`
+File: `WindowManager/WindowManagerApp.swift`
 
-`WindowManagerApp` создаёт три основных `@StateObject`:
+`WindowManagerApp` creates three main `@StateObject` instances:
 
 - `WindowService`
 - `PermissionsService`
 - `LayoutStorageService`
 
-Они передаются в SwiftUI-иерархию через `environmentObject`.
+They are injected into the SwiftUI hierarchy via `environmentObject`.
 
-При появлении главного окна вызывается `setupServices()`:
+When the main window appears, `setupServices()` runs:
 
-1. `StatusBarService.shared.setup(...)` — создаёт Menu Bar item и меню.
-2. `ScreenMonitorService.shared.setup(...)` — передаёт сервисы для автоматического применения раскладок.
+1. `StatusBarService.shared.setup(...)` creates the Menu Bar item and menu.
+2. `ScreenMonitorService.shared.setup(...)` provides the services required for automatic layout application.
 
 `AppDelegate`:
 
-- проверяет разрешения при запуске;
-- сохраняет ссылку на главное окно;
-- не завершает приложение при закрытии последнего окна, чтобы оно продолжало работать из Menu Bar;
-- умеет заново показать главное окно при повторном открытии приложения.
+- checks permissions on launch;
+- keeps a reference to the main window;
+- prevents the app from terminating when the last window is closed, so it can keep running from the Menu Bar;
+- can show the main window again when the app is reopened.
 
-## Модели данных
+## Data models
 
 ### `WindowInfo`
 
-Файл: `WindowManager/Models/WindowInfo.swift`
+File: `WindowManager/Models/WindowInfo.swift`
 
-Описывает одно сохранённое окно:
+Describes one saved window:
 
-| Поле | Назначение |
+| Field | Purpose |
 | --- | --- |
-| `id` | UUID записи окна |
-| `appName` | `localizedName` приложения |
-| `windowTitle` | Заголовок окна из Accessibility API |
-| `frame` | Абсолютный `CGRect` в координатах `NSScreen` |
-| `relativeFrame` | Нормализованный frame относительно экрана |
-| `screenIndex` | Индекс экрана, на котором окно было захвачено |
-| `timestamp` | Время захвата |
+| `id` | Window record UUID |
+| `appName` | Application `localizedName` |
+| `windowTitle` | Window title from Accessibility API |
+| `frame` | Absolute `CGRect` in `NSScreen` coordinates |
+| `relativeFrame` | Normalized frame relative to the display |
+| `screenIndex` | Index of the display where the window was captured |
+| `timestamp` | Capture time |
 
-`relativeFrame` — ключевой механизм устойчивости к переподключению мониторов. Вместо того чтобы полагаться только на абсолютные координаты, приложение сохраняет доли положения и размера окна относительно конкретного экрана:
+`relativeFrame` is the key mechanism that makes layouts resilient to monitor reconnection. Instead of relying only on absolute coordinates, the app stores the window position and size as fractions of the corresponding display:
 
 ```text
 x      = (window.x - screen.x) / screen.width
@@ -118,119 +120,119 @@ width  = window.width / screen.width
 height = window.height / screen.height
 ```
 
-При восстановлении эти значения пересчитываются в текущий frame экрана.
+During restore, these values are converted back into the current display frame.
 
 ### `Layout`
 
-Файл: `WindowManager/Models/Layout.swift`
+File: `WindowManager/Models/Layout.swift`
 
-Описывает сохранённую раскладку:
+Describes a saved layout:
 
-| Поле | Назначение |
+| Field | Purpose |
 | --- | --- |
-| `id` | UUID раскладки |
-| `name` | Пользовательское имя |
-| `windows` | Список сохранённых окон |
-| `createdAt` | Дата создания |
-| `lastUsed` | Последнее применение раскладки |
-| `screenConfiguration` | Конфигурация экранов на момент сохранения |
+| `id` | Layout UUID |
+| `name` | User-provided name |
+| `windows` | List of saved windows |
+| `createdAt` | Creation date |
+| `lastUsed` | Last time the layout was applied |
+| `screenConfiguration` | Display configuration at save time |
 
 ### `ScreenConfiguration`
 
-Хранит отсортированный список идентификаторов экранов и их количество. Используется для поиска раскладок, подходящих под текущий набор дисплеев.
+Stores a sorted list of display identifiers and the display count. It is used to find layouts matching the currently connected displays.
 
-Идентификатор экрана строится так:
+A display identifier is built as follows:
 
-1. Если доступен `NSScreenNumber`, используется `screen_<number>`.
-2. Иначе fallback: `screen_<width>x<height>_<x>_<y>`.
+1. If `NSScreenNumber` is available, `screen_<number>` is used.
+2. Otherwise the fallback is `screen_<width>x<height>_<x>_<y>`.
 
-## Сервисы
+## Services
 
 ### `PermissionsService`
 
-Файл: `WindowManager/Services/PermissionsService.swift`
+File: `WindowManager/Services/PermissionsService.swift`
 
-Отвечает за проверку и запрос разрешений macOS:
+Handles checking and requesting macOS permissions:
 
 - Accessibility: `AXIsProcessTrustedWithOptions`.
-- Screen Recording: попытка прочитать информацию об окнах через `CGWindowListCopyWindowInfo`.
+- Screen Recording: attempts to read window information via `CGWindowListCopyWindowInfo`.
 
-Также открывает соответствующие страницы System Settings через URL-схемы `x-apple.systempreferences`.
+It also opens the relevant System Settings pages via `x-apple.systempreferences` URL schemes.
 
 ### `WindowService`
 
-Файл: `WindowManager/Services/WindowService.swift`
+File: `WindowManager/Services/WindowService.swift`
 
-Главный сервис работы с окнами.
+The main service for working with external application windows.
 
-#### Захват раскладки
+#### Capturing a layout
 
 `captureCurrentLayout()`:
 
-1. Проверяет Accessibility-разрешение.
-2. Получает `NSWorkspace.shared.runningApplications`.
-3. Фильтрует обычные приложения с `activationPolicy == .regular`.
-4. Для каждого приложения создаёт `AXUIElementCreateApplication(pid)`.
-5. Читает `kAXWindowsAttribute`.
-6. Для каждого окна читает:
+1. Checks the Accessibility permission.
+2. Gets `NSWorkspace.shared.runningApplications`.
+3. Filters regular applications with `activationPolicy == .regular`.
+4. Creates `AXUIElementCreateApplication(pid)` for each application.
+5. Reads `kAXWindowsAttribute`.
+6. For each window, reads:
    - `kAXTitleAttribute`;
    - `kAXPositionAttribute`;
    - `kAXSizeAttribute`.
-7. Отбрасывает слишком маленькие окна и окна вне всех экранов.
-8. Определяет экран по максимальной площади пересечения окна с экраном.
-9. Сохраняет абсолютный `frame` и нормализованный `relativeFrame`.
+7. Skips windows that are too small or completely outside all displays.
+8. Determines the display by the largest intersection area between the window and each screen.
+9. Stores both the absolute `frame` and the normalized `relativeFrame`.
 
-#### Координаты AX и NSScreen
+#### AX and NSScreen coordinates
 
-Accessibility/Quartz и `NSScreen` используют разные оси Y:
+Accessibility/Quartz and `NSScreen` use different Y axes:
 
-- `NSScreen`: начало координат в нижнем левом углу основного экрана, Y растёт вверх.
-- AX/Quartz: начало координат в верхнем левом углу основного экрана, Y растёт вниз.
+- `NSScreen`: origin is the bottom-left corner of the main display; Y grows upward.
+- AX/Quartz: origin is the top-left corner of the main display; Y grows downward.
 
-Поэтому сервис содержит конвертеры:
+Because of this, the service contains coordinate converters:
 
 - `screenFrameToAXOrigin(_:)`
 - `axOriginToScreenFrame(axOrigin:size:)`
 
-Формула для перехода из `NSScreen` frame в AX origin:
+Formula for converting an `NSScreen` frame to an AX origin:
 
 ```text
 axY = mainScreenHeight - screenY - windowHeight
 ```
 
-#### Восстановление раскладки
+#### Restoring a layout
 
 `restoreLayout(_:)`:
 
-1. Проверяет Accessibility-разрешение.
-2. Получает текущие запущенные приложения и список экранов.
-3. Для каждого `WindowInfo` вычисляет `targetFrame`.
-4. Ищет приложение по `localizedName == appName`.
-5. Ищет окно по заголовку. Если у приложения одно окно, использует его как fallback.
-6. Устанавливает позицию и размер через AX API.
+1. Checks the Accessibility permission.
+2. Gets currently running applications and the list of displays.
+3. Computes `targetFrame` for each `WindowInfo`.
+4. Finds the application by `localizedName == appName`.
+5. Finds the window by title. If the application has exactly one window, that window is used as a fallback.
+6. Sets position and size via the AX API.
 
-`setWindowFrame(...)` выставляет позицию и размер в несколько шагов:
+`setWindowFrame(...)` applies position and size in several steps:
 
-1. Позиция.
-2. Небольшая пауза.
-3. Размер.
-4. Небольшая пауза.
-5. Повторная позиция.
-6. Отложенная проверка drift через 0.5 секунды и дополнительная коррекция при необходимости.
+1. Position.
+2. Short delay.
+3. Size.
+4. Short delay.
+5. Position again.
+6. Deferred drift check after 0.5 seconds and an additional correction if needed.
 
-Повторная установка позиции нужна потому, что некоторые приложения могут клипать размер окна и тем самым смещать позицию.
+The second position update is necessary because some applications clip the requested window size, which can shift the window position.
 
 ### `LayoutStorageService`
 
-Файл: `WindowManager/Services/LayoutStorageService.swift`
+File: `WindowManager/Services/LayoutStorageService.swift`
 
-Хранит массив `Layout` в `UserDefaults`:
+Stores the `[Layout]` array in `UserDefaults`:
 
-- ключ: `SavedLayouts`;
-- кодирование: `JSONEncoder`;
-- даты: `.iso8601`.
+- key: `SavedLayouts`;
+- encoder: `JSONEncoder`;
+- date strategy: `.iso8601`.
 
-Методы:
+Methods:
 
 - `saveLayout(_:)`
 - `deleteLayout(_:)`
@@ -239,97 +241,97 @@ axY = mainScreenHeight - screenY - windowHeight
 
 ### `ScreenMonitorService`
 
-Файл: `WindowManager/Services/ScreenMonitorService.swift`
+File: `WindowManager/Services/ScreenMonitorService.swift`
 
-Отслеживает `NSApplication.didChangeScreenParametersNotification` с debounce 0.5 секунды.
+Monitors `NSApplication.didChangeScreenParametersNotification` with a 0.5-second debounce.
 
-При изменении экранов:
+When displays change:
 
-1. Собирает новую `ScreenConfiguration`.
-2. Сравнивает её с текущей.
-3. Если конфигурация изменилась и Auto-apply включён, ищет сохранённые раскладки с такой же конфигурацией.
-4. Сортирует найденные раскладки по `lastUsed`.
-5. Через 1 секунду применяет самую свежую раскладку.
-6. Отправляет уведомление `Window Manager — Layout '<name>' applied automatically`.
+1. Builds a new `ScreenConfiguration`.
+2. Compares it with the current one.
+3. If the configuration changed and Auto-apply is enabled, searches for saved layouts with the same configuration.
+4. Sorts matching layouts by `lastUsed`.
+5. Applies the most recent layout after 1 second.
+6. Sends a `Window Manager — Layout '<name>' applied automatically` notification.
 
-Auto-apply хранится в `UserDefaults` под ключом `autoApplyEnabled`. Значение по умолчанию — `true`.
+Auto-apply is stored in `UserDefaults` under the `autoApplyEnabled` key. The default value is `true`.
 
 ### `StatusBarService`
 
-Файл: `WindowManager/Services/StatusBarService.swift`
+File: `WindowManager/Services/StatusBarService.swift`
 
-Создаёт `NSStatusItem` с системной иконкой `macwindow.on.rectangle` и динамическое меню.
+Creates an `NSStatusItem` with the `macwindow.on.rectangle` system symbol and a dynamic menu.
 
-Меню обновляется перед каждым открытием и содержит:
+The menu is refreshed before each opening and contains:
 
-1. список сохранённых раскладок;
+1. the list of saved layouts;
 2. `Save Current Layout...`;
 3. `Auto-apply Layouts`;
 4. `Open Window`;
 5. `Quit`.
 
-Для запуска сохранения из Menu Bar сервис открывает главное окно и отправляет уведомление `ShowSaveLayoutAlert`, которое слушает `ContentView`.
+To start saving from the Menu Bar, the service opens the main window and posts the `ShowSaveLayoutAlert` notification, which is observed by `ContentView`.
 
-## UI-компоненты
+## UI components
 
 ### `ContentView`
 
-Файл: `WindowManager/Views/ContentView.swift`
+File: `WindowManager/Views/ContentView.swift`
 
-Главное окно приложения. Состоит из левой панели и основной области.
+The main application window. It consists of a left panel and a main content area.
 
-Левая панель:
+Left panel:
 
-- иконка и название приложения;
-- краткое описание;
-- статус Active;
-- переключатель Auto-apply.
+- app icon and name;
+- short description;
+- Active status;
+- Auto-apply toggle.
 
-Основная область:
+Main area:
 
-- `Display Configuration` — текущие экраны;
-- `Quick Actions` — сохранение текущей раскладки и refresh;
-- `Saved Layouts` — список раскладок.
+- `Display Configuration` — current displays;
+- `Quick Actions` — saving the current layout and refreshing display info;
+- `Saved Layouts` — saved layouts list.
 
-Сохранение раскладки открывает `SaveLayoutSheet`, который показывает:
+Saving a layout opens `SaveLayoutSheet`, which shows:
 
-- имя раскладки;
-- конфигурацию дисплеев;
-- список найденных окон.
+- layout name;
+- display configuration;
+- detected windows list.
 
 ### `LayoutListView`
 
-Файл: `WindowManager/Views/LayoutListView.swift`
+File: `WindowManager/Views/LayoutListView.swift`
 
-Показывает сохранённые раскладки. Для каждой раскладки отображает:
+Shows saved layouts. For each layout it displays:
 
-- имя;
-- количество окон;
-- дату создания;
-- дату последнего использования, если есть;
-- кнопку Restore.
+- name;
+- number of windows;
+- creation date;
+- last-used date, if available;
+- Restore button.
 
-Контекстное меню позволяет восстановить или удалить раскладку.
+The context menu allows restoring or deleting a layout.
 
 ### `PermissionsView`
 
-Файл: `WindowManager/Views/PermissionsView.swift`
+File: `WindowManager/Views/PermissionsView.swift`
 
-Settings-экран для проверки и выдачи разрешений Accessibility и Screen Recording.
+Settings screen for checking and granting Accessibility and Screen Recording permissions.
 
-## Ограничения и поведение на краях
+## Limitations and edge behavior
 
-1. **Приложение не запускает отсутствующие приложения.** Если приложение из раскладки не запущено, соответствующее окно пропускается.
-2. **Окна сопоставляются по заголовкам.** Динамические заголовки могут мешать точному восстановлению.
-3. **Некоторые окна нельзя двигать.** Отдельные приложения запрещают изменение frame через Accessibility API или сразу корректируют его обратно.
-4. **Права macOS критичны.** Без Accessibility восстановление и захват не работают.
-5. **Screen Recording определяется эвристически.** Сервис проверяет возможность читать имена окон через `CGWindowListCopyWindowInfo`.
-6. **Экспорт раскладок отсутствует.** Сейчас раскладки живут только в локальном `UserDefaults`.
-7. **Auto-apply привязан к `ScreenConfiguration`.** Если идентификаторы экранов меняются нестабильно, подходящая раскладка может не найтись.
+1. **The app does not launch missing applications.** If an application from the layout is not running, the corresponding window is skipped.
+2. **Windows are matched by title.** Dynamic titles can prevent exact restore matching.
+3. **Some windows cannot be moved.** Certain applications reject Accessibility frame changes or immediately adjust the frame back.
+4. **macOS permissions are critical.** Without Accessibility, capturing and restoring layouts do not work.
+5. **Screen Recording is detected heuristically.** The service checks whether it can read window names via `CGWindowListCopyWindowInfo`.
+6. **No layout export yet.** Layouts currently live only in local `UserDefaults`.
+7. **Auto-apply is tied to `ScreenConfiguration`.** If display identifiers change unpredictably, a matching layout may not be found.
 
-## Проверка сборки
+## Build verification
 
-Команда для локальной проверки:
+Local verification command:
 
 ```bash
 xcodebuild \
@@ -340,14 +342,14 @@ xcodebuild \
   build
 ```
 
-Если Xcode выбирает несколько destination для Apple Silicon и Intel, это нормально; можно явно указать `arch=arm64` или `arch=x86_64` при необходимости.
+If Xcode chooses between multiple destinations for Apple Silicon and Intel, that is normal; specify `arch=arm64` or `arch=x86_64` explicitly if needed.
 
-## Возможные направления развития
+## Possible future improvements
 
-- Экспорт/импорт раскладок в JSON.
-- Редактирование сохранённой раскладки без пересохранения.
-- Более устойчивое сопоставление окон: bundle identifier, process identifier, AXRole, AXSubrole.
-- Автозапуск приложений, отсутствующих при восстановлении.
-- Горячие клавиши для сохранения и применения раскладок.
-- Поддержка исключений: не сохранять/не восстанавливать конкретные приложения или окна.
-- Отображение визуальной схемы экранов и окон перед сохранением.
+- Export/import layouts as JSON.
+- Edit a saved layout without recapturing it.
+- More robust window matching: bundle identifier, process identifier, AXRole, AXSubrole.
+- Automatically launch applications that are missing during restore.
+- Keyboard shortcuts for saving and applying layouts.
+- Exclusion support: do not save/restore specific applications or windows.
+- Visual screen/window layout preview before saving.
