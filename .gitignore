@@ -1,0 +1,6 @@
+# Xcode / macOS user state
+WindowManager.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
+
+# Common build artifacts
+DerivedData/
