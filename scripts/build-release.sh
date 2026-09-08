@@ -26,7 +26,6 @@ CLEAN_APP="$OUTPUT_DIR/WindowManager.app"
 ditto --norsrc --noextattr "$APP" "$CLEAN_APP"
 cleanup_xattrs() {
   xattr -cr "$1" 2>/dev/null || true
-  find "$1" -print0 | xargs -0 xattr -c 2>/dev/null || true
 }
 
 signed=false
