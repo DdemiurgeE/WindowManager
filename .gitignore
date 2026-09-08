@@ -4,3 +4,7 @@ WindowManager.xcodeproj/project.xcworkspace/xcuserdata/
 
 # Common build artifacts
 DerivedData/
+dist/
+
+# Graphify output
+graphify-out/

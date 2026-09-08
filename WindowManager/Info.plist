@@ -4,5 +4,11 @@
 <dict>
 	<key>CFBundleIconFile</key>
 	<string>WindowManager</string>
+	<key>SUFeedURL</key>
+	<string>https://ddemiurgee.github.io/WindowManager/appcast.xml</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
 </dict>
 </plist>

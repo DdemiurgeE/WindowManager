@@ -61,7 +61,6 @@ struct ContentView: View {
         }
         .onAppear {
             updateScreenDetails()
-
             // Подписываемся на уведомление от статус-бара
             NotificationCenter.default.addObserver(
                 forName: NSNotification.Name("ShowSaveLayoutAlert"),
@@ -70,6 +69,11 @@ struct ContentView: View {
             ) { _ in
                 prepareToSaveLayout()
             }
+        }
+        .onReceive(screenMonitor.$currentScreenConfiguration) { newConfig in
+            guard newConfig != nil else { return }
+            print("[ContentView] Screen configuration changed; refreshing display details")
+            updateScreenDetails()
         }
     }
 

@@ -124,7 +124,14 @@ class WindowService: ObservableObject {
         )
 
         print("Captured '\(title)' on screen \(screenIndex) [relative=\(relativeFrame)]")
-        return WindowInfo(appName: appName, windowTitle: title, frame: screenFrame, screenIndex: screenIndex, relativeFrame: relativeFrame)
+        return WindowInfo(
+            appName: appName,
+            windowTitle: title,
+            frame: screenFrame,
+            screenIndex: screenIndex,
+            relativeFrame: relativeFrame,
+            screenID: getScreenID(for: targetScreen)
+        )
     }
     
     private func getScreenIndex(for frame: CGRect, screens: [NSScreen]) -> Int {
@@ -144,10 +151,13 @@ class WindowService: ObservableObject {
         return bestIndex
     }
     
-    func restoreLayout(_ layout: Layout) {
+    @discardableResult
+    func restoreLayout(_ layout: Layout) -> RestoreResult {
+        var results: [WindowRestoreResult] = []
+
         guard PermissionsService.shared.checkAccessibilityPermission() else {
             print("No accessibility permission")
-            return
+            return RestoreResult(layoutName: layout.name, windowsResults: results)
         }
         
         let runningApps = NSWorkspace.shared.runningApplications
@@ -163,6 +173,7 @@ class WindowService: ObservableObject {
 
             guard let app = runningApps.first(where: { $0.localizedName == windowInfo.appName }) else {
                 print("  App not found: \(windowInfo.appName)")
+                results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .appNotFound))
                 continue
             }
             
@@ -172,6 +183,7 @@ class WindowService: ObservableObject {
             let result = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsRef)
             
             if result == .success, let windowArray = windowsRef as? [AXUIElement] {
+                var matched = false
                 for windowElement in windowArray {
                     var titleRef: CFTypeRef?
                     AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef)
@@ -179,11 +191,20 @@ class WindowService: ObservableObject {
                     
                     if title == windowInfo.windowTitle || windowArray.count == 1 {
                         self.setWindowFrame(windowElement, frame: targetFrame, debugName: "\(windowInfo.appName) — \(title)")
+                        results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: title, status: .positionSet))
+                        matched = true
                         break
                     }
                 }
+                if !matched {
+                    print("  Window skipped: \(windowInfo.windowTitle)")
+                    results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .windowSkipped))
+                }
             }
         }
+
+        print("[RestoreResult] \(RestoreResult(layoutName: layout.name, windowsResults: results).summaryDescription)")
+        return RestoreResult(layoutName: layout.name, windowsResults: results)
     }
 
     /// Вычисляет абсолютный targetFrame для окна при восстановлении.
@@ -194,21 +215,72 @@ class WindowService: ObservableObject {
     ///    по разрешению среди доступных.
     /// 3. Fallback — используем абсолютный frame как есть (для старых лэйаутов).
     private func resolveTargetFrame(for windowInfo: WindowInfo, screens: [NSScreen]) -> CGRect {
+        guard !screens.isEmpty else { return windowInfo.frame }
+
         guard let relativeFrame = windowInfo.relativeFrame else {
             return windowInfo.frame
         }
 
-        // Определяем целевой экран: предпочитаем сохранённый screenIndex,
-        // но если он недоступен — берём последний из доступных.
-        let screenIndex = min(windowInfo.screenIndex, screens.count - 1)
-        let screen = screens[screenIndex]
+        func computeFrame(for screen: NSScreen) -> CGRect {
+            CGRect(
+                x: screen.frame.origin.x + relativeFrame.origin.x * screen.frame.width,
+                y: screen.frame.origin.y + relativeFrame.origin.y * screen.frame.height,
+                width: relativeFrame.width * screen.frame.width,
+                height: relativeFrame.height * screen.frame.height
+            )
+        }
 
-        return CGRect(
-            x: screen.frame.origin.x + relativeFrame.origin.x * screen.frame.width,
-            y: screen.frame.origin.y + relativeFrame.origin.y * screen.frame.height,
-            width: relativeFrame.width * screen.frame.width,
-            height: relativeFrame.height * screen.frame.height
-        )
+        func isCenterInside(frame: CGRect, screen: NSScreen) -> Bool {
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            return screen.frame.contains(center)
+        }
+
+        // Prefer the stable display ID. NSScreen.screens order is not stable
+        // across monitor reconnects, so an index alone can move every window
+        // to a different display.
+        let preferredIndex: Int
+        if let savedScreenID = windowInfo.screenID,
+           let stableIndex = screens.firstIndex(where: { getScreenID(for: $0) == savedScreenID }) {
+            preferredIndex = stableIndex
+            print("[WindowRestore] Window '\(windowInfo.appName)' matched saved display \(savedScreenID) at current index \(stableIndex)")
+        } else {
+            // Legacy layouts have no stable display ID.
+            preferredIndex = min(max(windowInfo.screenIndex, 0), screens.count - 1)
+            print("[WindowRestore] Window '\(windowInfo.appName)' using legacy display index \(preferredIndex)")
+        }
+        let preferredScreen = screens[preferredIndex]
+        let preferredFrame = computeFrame(for: preferredScreen)
+
+        if isCenterInside(frame: preferredFrame, screen: preferredScreen) {
+             print("[WindowRestore] Window '\(windowInfo.appName)' → screen \(preferredIndex) (bounds check passed)")
+            return preferredFrame
+        }
+
+        // Strategy 2: Find any screen whose bounds contain the window center
+        for (index, screen) in screens.enumerated() {
+            guard index != preferredIndex else { continue }
+            let candidateFrame = computeFrame(for: screen)
+            if isCenterInside(frame: candidateFrame, screen: screen) {
+                print("[WindowRestore] Window '\(windowInfo.appName)' → screen \(index) (fallback: preferred screen \(preferredIndex) didn't contain center)")
+                return candidateFrame
+            }
+        }
+
+        // Strategy 3: Last resort — screen with maximum overlap
+        var bestIndex = preferredIndex
+        var bestOverlap: CGFloat = 0
+        for (index, screen) in screens.enumerated() {
+            let candidateFrame = computeFrame(for: screen)
+            let intersection = screen.frame.intersection(candidateFrame)
+            let area = intersection.width * intersection.height
+            if area > bestOverlap {
+                bestOverlap = area
+                bestIndex = index
+            }
+        }
+        let bestFrame = computeFrame(for: screens[bestIndex])
+        print("[WindowRestore] Window '\(windowInfo.appName)' → screen \(bestIndex) (overlap fallback: \(String(format: "%.0f", bestOverlap)) px²)")
+        return bestFrame
     }
     
     private func setWindowFrame(_ windowElement: AXUIElement, frame: CGRect, debugName: String = "") {
