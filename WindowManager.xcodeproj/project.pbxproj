@@ -10,6 +10,10 @@
 		DD1502142F321B200009A56D /* WindowManager.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WindowManager.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXBuildFile section */
+		DD1502302F321B210009A56D /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = DD1502322F321B210009A56D /* Sparkle */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		DDD08C5B2F446BF700381595 /* Exceptions for "WindowManager" folder in "WindowManager" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
@@ -36,6 +40,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DD1502302F321B210009A56D /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +83,7 @@
 			);
 			name = WindowManager;
 			packageProductDependencies = (
+				DD1502322F321B210009A56D /* Sparkle */,
 			);
 			productName = WindowManager;
 			productReference = DD1502142F321B200009A56D /* WindowManager.app */;
@@ -111,11 +117,33 @@
 			productRefGroup = DD1502152F321B200009A56D /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
+			packageReferences = (
+				DD1502312F321B210009A56D /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			targets = (
 				DD1502132F321B200009A56D /* WindowManager */,
 			);
 		};
 /* End PBXProject section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		DD1502312F321B210009A56D /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.6.4;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		DD1502322F321B210009A56D /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DD1502312F321B210009A56D /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXResourcesBuildPhase section */
 		DD1502122F321B200009A56D /* Resources */ = {

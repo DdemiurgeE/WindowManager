@@ -37,6 +37,10 @@ Until Developer ID signing, notarization, and Sparkle EdDSA signing are
 configured, the GitHub Release remains the install/update source but is not a
 trusted unattended update channel.
 
+The application starts `SPUStandardUpdaterController` at launch and exposes
+**Check for Updates…** in the application menu. Sparkle is pinned through the
+Swift Package Manager dependency in the Xcode project.
+
 Verify local artifacts with:
 
 ```bash

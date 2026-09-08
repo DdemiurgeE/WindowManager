@@ -15,7 +15,7 @@ VERSION="$(printf '%s\n' "$BUILD_SETTINGS" | awk '/^[[:space:]]*MARKETING_VERSIO
 BUILD="$(printf '%s\n' "$BUILD_SETTINGS" | awk '/^[[:space:]]*CURRENT_PROJECT_VERSION = / {print $3; exit}')"
 [[ -n "$VERSION" && -n "$BUILD" ]] || { echo "Cannot determine app version" >&2; exit 1; }
 
-xcodebuild -project WindowManager.xcodeproj -scheme WindowManager -configuration Release \
+SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}" xcodebuild -project WindowManager.xcodeproj -scheme WindowManager -configuration Release \
   -destination "platform=macOS,arch=$ARCH" -derivedDataPath "$DERIVED_DATA" \
   CODE_SIGNING_ALLOWED=NO build
 

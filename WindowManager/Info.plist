@@ -10,5 +10,7 @@
 	<true/>
 	<key>SUAutomaticallyUpdate</key>
 	<false/>
+	<key>SUPublicEDKey</key>
+	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
 </dict>
 </plist>

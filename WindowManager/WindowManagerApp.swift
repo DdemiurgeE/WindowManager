@@ -1,4 +1,5 @@
 import SwiftUI
+import Sparkle
 
 @main
 struct WindowManagerApp: App {
@@ -21,6 +22,11 @@ struct WindowManagerApp: App {
         }
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    UpdateService.shared.checkForUpdates()
+                }
+            }
         }
         
         Settings {
@@ -49,6 +55,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         PermissionsService.shared.checkAllPermissions()
+        UpdateService.shared.start()
         
         // Сохраняем ссылку на главное окно
         DispatchQueue.main.async {
