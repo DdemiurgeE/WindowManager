@@ -34,7 +34,8 @@ import sys
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-path, version, build, min_os, url, attrs_text, pub_date = sys.argv[1:]
+path = Path(sys.argv[1])
+version, build, min_os, url, attrs_text, pub_date = sys.argv[2:]
 ns = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 ET.register_namespace("sparkle", ns)
 if path.exists():

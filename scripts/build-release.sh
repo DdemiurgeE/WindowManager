@@ -23,9 +23,23 @@ APP="$DERIVED_DATA/Build/Products/Release/WindowManager.app"
 [[ -d "$APP" ]] || { echo "Release app was not built: $APP" >&2; exit 1; }
 
 CLEAN_APP="$OUTPUT_DIR/WindowManager.app"
-ditto --noextattr --noqtn "$APP" "$CLEAN_APP"
-xattr -cr "$CLEAN_APP" 2>/dev/null || true
-codesign --force --deep --sign - "$CLEAN_APP"
+ditto --norsrc --noextattr "$APP" "$CLEAN_APP"
+cleanup_xattrs() {
+  xattr -cr "$1" 2>/dev/null || true
+  find "$1" -print0 | xargs -0 xattr -c 2>/dev/null || true
+}
+
+signed=false
+for attempt in 1 2 3 4 5; do
+  cleanup_xattrs "$CLEAN_APP"
+  if codesign --force --deep --sign - "$CLEAN_APP" >/dev/null 2>/tmp/windowmanager-codesign-err.log; then
+    signed=true
+    break
+  fi
+  printf 'codesign attempt %s failed, retrying\n' "$attempt" >&2
+done
+[[ "$signed" == true ]] || { cat /tmp/windowmanager-codesign-err.log >&2; exit 1; }
+cleanup_xattrs "$CLEAN_APP"
 codesign --verify --deep --verbose=2 "$CLEAN_APP"
 
 ZIP="$OUTPUT_DIR/WindowManager-${VERSION}.zip"
@@ -33,5 +47,4 @@ ZIP="$OUTPUT_DIR/WindowManager-${VERSION}.zip"
 hdiutil create -volname "WindowManager ${VERSION}" -srcfolder "$CLEAN_APP" -ov -format UDZO "$OUTPUT_DIR/WindowManager-${VERSION}.dmg"
 
 (cd "$OUTPUT_DIR" && shasum -a 256 "WindowManager-${VERSION}.zip" "WindowManager-${VERSION}.dmg" > SHA256SUMS)
-rm -rf "$CLEAN_APP"
 printf 'Built WindowManager %s (%s) in %s\n' "$VERSION" "$BUILD" "$OUTPUT_DIR"

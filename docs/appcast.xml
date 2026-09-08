@@ -1,0 +1,16 @@
+<?xml version='1.0' encoding='utf-8'?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>WindowManager Changelog</title>
+        <link>https://ddemiurgee.github.io/WindowManager/appcast.xml</link>
+        <description>WindowManager updates.</description>
+        <item>
+            <title>Version 2.3</title>
+            <pubDate>Tue, 08 Sep 2026 14:56:47 +0000</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>2.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.2</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/DdemiurgeE/WindowManager/releases/download/v2.3/WindowManager-2.3.zip" type="application/octet-stream" sparkle:edSignature="w4i2m/h6aVv0tTVs7BLe4oS3ijZbVpZIPkFTkR5Y7Tmi3srCnSoIjh/zRVXPzZ34L6mMBkudzAO8W9IF+VrkDQ==" length="2134902" />
+        </item>
+    </channel>
+</rss>
