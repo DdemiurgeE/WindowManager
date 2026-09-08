@@ -24,7 +24,9 @@ APP="$DERIVED_DATA/Build/Products/Release/WindowManager.app"
 
 CLEAN_APP="$OUTPUT_DIR/WindowManager.app"
 ditto --noextattr --noqtn "$APP" "$CLEAN_APP"
-codesign --verify --deep --strict --verbose=2 "$CLEAN_APP" 2>&1 || true
+xattr -cr "$CLEAN_APP" 2>/dev/null || true
+codesign --force --deep --sign - "$CLEAN_APP"
+codesign --verify --deep --verbose=2 "$CLEAN_APP"
 
 ZIP="$OUTPUT_DIR/WindowManager-${VERSION}.zip"
 (cd "$OUTPUT_DIR" && ditto -c -k --sequesterRsrc --keepParent WindowManager.app "$(basename "$ZIP")")
