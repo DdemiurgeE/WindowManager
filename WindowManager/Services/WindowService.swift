@@ -271,78 +271,26 @@ class WindowService: ObservableObject {
 
     /// Вычисляет абсолютный targetFrame для окна при восстановлении.
     ///
-    /// Алгоритм:
-    /// 1. Если есть relativeFrame — пересчитываем через текущее положение экрана с нужным screenIndex.
-    /// 2. Если screenIndex вышел за пределы (мониторов стало меньше) — ищем наиболее похожий экран
-    ///    по разрешению среди доступных.
-    /// 3. Fallback — используем абсолютный frame как есть (для старых лэйаутов).
+    /// Display selection is deliberately completed before relative-frame conversion.
+    /// NSScreenNumber/CGDirectDisplayID is only a current-observation key: macOS may
+    /// assign a different number after hot-plug. It is therefore never treated as a
+    /// permanent vendor/model/serial hardware identity.
     private func resolveTargetFrame(for windowInfo: WindowInfo, screens: [NSScreen]) -> CGRect {
-        guard !screens.isEmpty else { return windowInfo.frame }
-
-        guard let relativeFrame = windowInfo.relativeFrame else {
+        let displays = screens.enumerated().map { index, screen in
+            DisplaySnapshot(screenID: getScreenID(for: screen), frame: screen.frame, index: index)
+        }
+        let snapshot = WindowSnapshot(
+            frame: windowInfo.frame,
+            relativeFrame: windowInfo.relativeFrame,
+            screenID: windowInfo.screenID,
+            screenIndex: windowInfo.screenIndex
+        )
+        guard let resolved = ScreenResolver().resolve(window: snapshot, displays: displays) else {
+            print("[WindowRestore] Window '\(windowInfo.appName)' has no available display; using saved frame")
             return windowInfo.frame
         }
-
-        func computeFrame(for screen: NSScreen) -> CGRect {
-            CGRect(
-                x: screen.frame.origin.x + relativeFrame.origin.x * screen.frame.width,
-                y: screen.frame.origin.y + relativeFrame.origin.y * screen.frame.height,
-                width: relativeFrame.width * screen.frame.width,
-                height: relativeFrame.height * screen.frame.height
-            )
-        }
-
-        func isCenterInside(frame: CGRect, screen: NSScreen) -> Bool {
-            let center = CGPoint(x: frame.midX, y: frame.midY)
-            return screen.frame.contains(center)
-        }
-
-        // Prefer the stable display ID. NSScreen.screens order is not stable
-        // across monitor reconnects, so an index alone can move every window
-        // to a different display.
-        let preferredIndex: Int
-        if let savedScreenID = windowInfo.screenID,
-           let stableIndex = screens.firstIndex(where: { getScreenID(for: $0) == savedScreenID }) {
-            preferredIndex = stableIndex
-            print("[WindowRestore] Window '\(windowInfo.appName)' matched saved display \(savedScreenID) at current index \(stableIndex)")
-        } else {
-            // Legacy layouts have no stable display ID.
-            preferredIndex = min(max(windowInfo.screenIndex, 0), screens.count - 1)
-            print("[WindowRestore] Window '\(windowInfo.appName)' using legacy display index \(preferredIndex)")
-        }
-        let preferredScreen = screens[preferredIndex]
-        let preferredFrame = computeFrame(for: preferredScreen)
-
-        if isCenterInside(frame: preferredFrame, screen: preferredScreen) {
-             print("[WindowRestore] Window '\(windowInfo.appName)' → screen \(preferredIndex) (bounds check passed)")
-            return preferredFrame
-        }
-
-        // Strategy 2: Find any screen whose bounds contain the window center
-        for (index, screen) in screens.enumerated() {
-            guard index != preferredIndex else { continue }
-            let candidateFrame = computeFrame(for: screen)
-            if isCenterInside(frame: candidateFrame, screen: screen) {
-                print("[WindowRestore] Window '\(windowInfo.appName)' → screen \(index) (fallback: preferred screen \(preferredIndex) didn't contain center)")
-                return candidateFrame
-            }
-        }
-
-        // Strategy 3: Last resort — screen with maximum overlap
-        var bestIndex = preferredIndex
-        var bestOverlap: CGFloat = 0
-        for (index, screen) in screens.enumerated() {
-            let candidateFrame = computeFrame(for: screen)
-            let intersection = screen.frame.intersection(candidateFrame)
-            let area = intersection.width * intersection.height
-            if area > bestOverlap {
-                bestOverlap = area
-                bestIndex = index
-            }
-        }
-        let bestFrame = computeFrame(for: screens[bestIndex])
-        print("[WindowRestore] Window '\(windowInfo.appName)' → screen \(bestIndex) (overlap fallback: \(String(format: "%.0f", bestOverlap)) px²)")
-        return bestFrame
+        print("[WindowRestore] Window '\(windowInfo.appName)' selected display index \(resolved.display.index) via \(resolved.selection)")
+        return resolved.frame
     }
     
     private func setWindowFrame(_ windowElement: AnyObject, frame: CGRect, debugName: String = "") -> WindowRestoreResult.WindowRestoreStatus {

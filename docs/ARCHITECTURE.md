@@ -146,6 +146,16 @@ A display identifier is built as follows:
 1. If `NSScreenNumber` is available, `screen_<number>` is used.
 2. Otherwise the fallback is `screen_<width>x<height>_<x>_<y>`.
 
+`NSScreenNumber` (the same current-observation value exposed as the
+`CGDirectDisplayID` key) is not promised to be a permanent hardware identity.
+It can change after a display is unplugged and reattached, so the restore path
+uses it only when it is present exactly once in the current snapshot. Vendor,
+model, and serial are not persisted because this project does not currently
+have a verified cross-version API for a composite fingerprint. Duplicate,
+missing, or changed IDs use the deterministic resolver fallback and emit the
+selection strategy in the restore log; normalized coordinates are never used
+to prove that a display is physically the same monitor.
+
 ## Services
 
 ### `PermissionsService`
