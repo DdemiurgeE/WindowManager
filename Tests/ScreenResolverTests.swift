@@ -17,6 +17,7 @@ struct ScreenResolverTests {
     static func main() {
         testScreenIDSelectsPhysicalDisplayBeforeFrameConversion()
         testSameGeometryPreservesExactPoints()
+        testIncompleteGeometryMetadataUsesNormalizedFallback()
         testScaleChangeUsesNormalizedFallback()
         testResolutionChangeUsesSelectedDisplayForRelativeFrame()
         testVisibleFrameClampKeepsTitleBarAndSize()
@@ -25,7 +26,8 @@ struct ScreenResolverTests {
         testDuplicateScreenIDFallsBackWithoutGuessingIdentity()
         testNegativeArrangementAndLegacyIndexFallback()
         testEmptyDisplaySetReturnsNil()
-        print("ScreenResolverTests: 10 tests passed")
+        testLegacyJSONWithoutOptionalGeometryStillDecodes()
+        print("ScreenResolverTests: 12 tests passed")
     }
 
     private static func testScreenIDSelectsPhysicalDisplayBeforeFrameConversion() {
@@ -57,9 +59,29 @@ struct ScreenResolverTests {
         let frame = CGRect(x: 137, y: 211, width: 777, height: 533)
         let displayFrame = CGRect(x: -1200, y: -300, width: 1920, height: 1080)
         let visible = CGRect(x: -1200, y: -270, width: 1920, height: 1040)
-        let window = WindowSnapshot(frame: frame, relativeFrame: CGRect(x: 0, y: 0, width: 1, height: 1), screenID: "left", screenIndex: 0, savedDisplayFrame: displayFrame, savedVisibleFrame: visible)
-        let result = ScreenResolver().resolve(window: window, displays: [DisplaySnapshot(screenID: "left", frame: displayFrame, visibleFrame: visible, index: 0)])
+        let display = DisplaySnapshot(screenID: "left", frame: displayFrame, visibleFrame: visible, scale: 2, index: 0)
+        let window = WindowSnapshot(frame: frame, relativeFrame: CGRect(x: 0, y: 0, width: 1, height: 1), screenID: "left", screenIndex: 0, savedDisplayFrame: displayFrame, savedVisibleFrame: visible, savedScale: 2)
+        let result = ScreenResolver().resolve(window: window, displays: [display])
         assertEqual(result?.frame, frame, "same geometry exact point frame")
+    }
+
+    private static func testIncompleteGeometryMetadataUsesNormalizedFallback() {
+        let displayFrame = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let display = DisplaySnapshot(screenID: "primary", frame: displayFrame, visibleFrame: displayFrame, scale: 2, index: 0)
+        let expectedRelativeFrame = CGRect(x: 0.7, y: 0.5, width: 0.2, height: 0.2)
+        let exactFrame = CGRect(x: 10, y: 20, width: 100, height: 100)
+
+        let complete = WindowSnapshot(frame: exactFrame, relativeFrame: expectedRelativeFrame, screenID: "primary", screenIndex: 0, savedDisplayFrame: displayFrame, savedVisibleFrame: displayFrame, savedScale: 2)
+        assertEqual(ScreenResolver().resolve(window: complete, displays: [display])?.frame, exactFrame, "complete metadata exact frame")
+
+        let missingDisplayFrame = WindowSnapshot(frame: exactFrame, relativeFrame: expectedRelativeFrame, screenID: "primary", screenIndex: 0, savedVisibleFrame: displayFrame, savedScale: 2)
+        assertEqual(ScreenResolver().resolve(window: missingDisplayFrame, displays: [display])?.frame, CGRect(x: 700, y: 400, width: 200, height: 160), "missing display frame fallback")
+
+        let missingVisibleFrame = WindowSnapshot(frame: exactFrame, relativeFrame: expectedRelativeFrame, screenID: "primary", screenIndex: 0, savedDisplayFrame: displayFrame, savedScale: 2)
+        assertEqual(ScreenResolver().resolve(window: missingVisibleFrame, displays: [display])?.frame, CGRect(x: 700, y: 400, width: 200, height: 160), "missing visible frame fallback")
+
+        let missingScale = WindowSnapshot(frame: exactFrame, relativeFrame: expectedRelativeFrame, screenID: "primary", screenIndex: 0, savedDisplayFrame: displayFrame, savedVisibleFrame: displayFrame)
+        assertEqual(ScreenResolver().resolve(window: missingScale, displays: [display])?.frame, CGRect(x: 700, y: 400, width: 200, height: 160), "missing scale fallback")
     }
 
     private static func testScaleChangeUsesNormalizedFallback() {
@@ -119,5 +141,20 @@ struct ScreenResolverTests {
     private static func testEmptyDisplaySetReturnsNil() {
         let window = WindowSnapshot(frame: .zero, screenIndex: 0)
         assertNil(ScreenResolver().resolve(window: window, displays: []), "empty display set")
+    }
+
+    private static func testLegacyJSONWithoutOptionalGeometryStillDecodes() {
+        let original = WindowInfo(appName: "Test", windowTitle: "Legacy", frame: CGRect(x: 10, y: 20, width: 300, height: 200), screenIndex: 0)
+        let encoder = JSONEncoder()
+        let data = try! encoder.encode(original)
+        var object = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        object.removeValue(forKey: "savedDisplayFrame")
+        object.removeValue(forKey: "savedVisibleFrame")
+        object.removeValue(forKey: "savedScale")
+        let legacyData = try! JSONSerialization.data(withJSONObject: object)
+        let decoded = try! JSONDecoder().decode(WindowInfo.self, from: legacyData)
+        assertNil(decoded.savedDisplayFrame, "legacy display frame")
+        assertNil(decoded.savedVisibleFrame, "legacy visible frame")
+        assertNil(decoded.savedScale, "legacy scale")
     }
 }

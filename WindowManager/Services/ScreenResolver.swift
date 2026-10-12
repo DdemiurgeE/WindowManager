@@ -91,9 +91,20 @@ struct ScreenResolver {
             selected = (displays.sorted(by: displayOrder).first!, .firstDisplay)
         }
 
-        let sameGeometry = window.savedDisplayFrame.map { $0 == selected.display.frame } ?? false
-            && (window.savedVisibleFrame == nil || window.savedVisibleFrame == selected.display.visibleFrame)
-            && (window.savedScale == nil || window.savedScale == selected.display.scale)
+        let sameGeometry: Bool
+        if let savedDisplayFrame = window.savedDisplayFrame,
+           let savedVisibleFrame = window.savedVisibleFrame,
+           let savedScale = window.savedScale,
+           let displayScale = selected.display.scale {
+            sameGeometry = savedDisplayFrame == selected.display.frame
+                && savedVisibleFrame == selected.display.visibleFrame
+                && savedScale == displayScale
+        } else {
+            // Exact restoration requires a complete observation. Optional fields
+            // are intentionally treated as legacy/incomplete metadata, not as
+            // wildcards that can authorize an absolute-frame restore.
+            sameGeometry = false
+        }
         let candidate: CGRect
         if sameGeometry {
             candidate = window.frame
