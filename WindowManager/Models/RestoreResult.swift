@@ -18,8 +18,14 @@ struct WindowRestoreResult: Codable, Identifiable {
         case windowMatched
         /// No matching window found in the app
         case windowSkipped
-        /// AX position/size set successfully
+        /// AX position/size were set and the read-back matches the target.
         case positionSet
+        /// The application accepted the request but imposed a different frame.
+        case appImposedClamp
+        /// An Accessibility API operation failed.
+        case axFailure
+        /// The primary display was not available for coordinate conversion.
+        case coordinateUnavailable
     }
 
     init(appName: String, windowTitle: String, status: WindowRestoreStatus) {
@@ -36,7 +42,9 @@ struct RestoreResult {
 
     var windowsTotal: Int { windowsResults.count }
     var windowsRestored: Int {
-        windowsResults.filter { $0.status == .windowMatched || $0.status == .positionSet }.count
+        windowsResults.filter {
+            $0.status == .windowMatched || $0.status == .positionSet || $0.status == .appImposedClamp
+        }.count
     }
     var summaryDescription: String {
         "\(windowsRestored)/\(windowsTotal) windows restored"

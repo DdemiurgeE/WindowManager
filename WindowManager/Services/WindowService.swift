@@ -3,9 +3,85 @@ import AppKit
 import ApplicationServices
 import Combine
 
+enum AXOperationResult<Value> {
+    case success(Value)
+    case failure(AXError)
+}
+
+protocol AXWindowClient {
+    func windows(for processIdentifier: pid_t) -> AXOperationResult<[AnyObject]>
+    func title(of window: AnyObject) -> AXOperationResult<String>
+    func position(of window: AnyObject) -> AXOperationResult<CGPoint>
+    func size(of window: AnyObject) -> AXOperationResult<CGSize>
+    func setPosition(_ position: CGPoint, of window: AnyObject) -> AXError
+    func setSize(_ size: CGSize, of window: AnyObject) -> AXError
+}
+
+struct SystemAXWindowClient: AXWindowClient {
+    final class Handle {
+        let element: AXUIElement
+        init(_ element: AXUIElement) { self.element = element }
+    }
+
+    func windows(for processIdentifier: pid_t) -> AXOperationResult<[AnyObject]> {
+        let app = AXUIElementCreateApplication(processIdentifier)
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+        guard error == .success, let elements = value as? [AXUIElement] else { return .failure(error) }
+        return .success(elements.map { Handle($0) as AnyObject })
+    }
+
+    func title(of window: AnyObject) -> AXOperationResult<String> {
+        guard let window = window as? Handle else { return .failure(.illegalArgument) }
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(window.element, kAXTitleAttribute as CFString, &value)
+        guard error == .success, let title = value as? String else { return .failure(error) }
+        return .success(title)
+    }
+
+    func position(of window: AnyObject) -> AXOperationResult<CGPoint> {
+        guard let window = window as? Handle else { return .failure(.illegalArgument) }
+        return read(.cgPoint, kAXPositionAttribute, window.element)
+    }
+    func size(of window: AnyObject) -> AXOperationResult<CGSize> {
+        guard let window = window as? Handle else { return .failure(.illegalArgument) }
+        return read(.cgSize, kAXSizeAttribute, window.element)
+    }
+
+    private func read<T>(_ type: AXValueType, _ attribute: String, _ element: AXUIElement) -> AXOperationResult<T> {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard error == .success, let value else { return .failure(error) }
+        let axValue = value as! AXValue
+        var result: T? = nil
+        if type == .cgPoint { var point = CGPoint.zero; guard AXValueGetValue(axValue, type, &point) else { return .failure(.failure) }; result = point as? T }
+        else { var size = CGSize.zero; guard AXValueGetValue(axValue, type, &size) else { return .failure(.failure) }; result = size as? T }
+        return result.map(AXOperationResult.success) ?? .failure(.failure)
+    }
+
+    func setPosition(_ position: CGPoint, of window: AnyObject) -> AXError {
+        guard let window = window as? Handle else { return .illegalArgument }
+        var value = position
+        guard let axValue = AXValueCreate(.cgPoint, &value) else { return .failure }
+        return AXUIElementSetAttributeValue(window.element, kAXPositionAttribute as CFString, axValue)
+    }
+
+    func setSize(_ size: CGSize, of window: AnyObject) -> AXError {
+        guard let window = window as? Handle else { return .illegalArgument }
+        var value = size
+        guard let axValue = AXValueCreate(.cgSize, &value) else { return .failure }
+        return AXUIElementSetAttributeValue(window.element, kAXSizeAttribute as CFString, axValue)
+    }
+}
+
 class WindowService: ObservableObject {
     @Published var currentWindows: [WindowInfo] = []
     @Published var isCapturing = false
+    private let axClient: AXWindowClient
+
+    init(axClient: AXWindowClient = SystemAXWindowClient()) {
+        self.axClient = axClient
+    }
     
     func captureCurrentLayout() -> [WindowInfo] {
         var windows: [WindowInfo] = []
@@ -146,8 +222,12 @@ class WindowService: ObservableObject {
             return RestoreResult(layoutName: layout.name, windowsResults: results)
         }
         
-        let runningApps = NSWorkspace.shared.runningApplications
         let screens = NSScreen.screens
+        guard coordinateConverter != nil else {
+            let unavailable = layout.windows.map { WindowRestoreResult(appName: $0.appName, windowTitle: $0.windowTitle, status: .coordinateUnavailable) }
+            return RestoreResult(layoutName: layout.name, windowsResults: unavailable)
+        }
+        let runningApps = NSWorkspace.shared.runningApplications
         
         print("=== Restoring layout: \(layout.name) ===")
         for (index, screen) in screens.enumerated() {
@@ -163,21 +243,17 @@ class WindowService: ObservableObject {
                 continue
             }
             
-            let appRef = AXUIElementCreateApplication(app.processIdentifier)
-            var windowsRef: CFTypeRef?
-            
-            let result = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsRef)
-            
-            if result == .success, let windowArray = windowsRef as? [AXUIElement] {
+            switch axClient.windows(for: app.processIdentifier) {
+            case .failure(let error):
+                print("  AX windows failed for \(windowInfo.appName): \(error.rawValue)")
+                results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .axFailure))
+            case .success(let windowArray):
                 var matched = false
                 for windowElement in windowArray {
-                    var titleRef: CFTypeRef?
-                    AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef)
-                    let title = titleRef as? String ?? ""
-                    
+                    guard case .success(let title) = axClient.title(of: windowElement) else { continue }
                     if title == windowInfo.windowTitle || windowArray.count == 1 {
-                        self.setWindowFrame(windowElement, frame: targetFrame, debugName: "\(windowInfo.appName) — \(title)")
-                        results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: title, status: .positionSet))
+                        let status = self.setWindowFrame(windowElement, frame: targetFrame, debugName: "\(windowInfo.appName) — \(title)")
+                        results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: title, status: status))
                         matched = true
                         break
                     }
@@ -269,60 +345,57 @@ class WindowService: ObservableObject {
         return bestFrame
     }
     
-    private func setWindowFrame(_ windowElement: AXUIElement, frame: CGRect, debugName: String = "") {
-        guard let coordinateConverter else { return }
-        let axPosition = coordinateConverter.screenFrameToAXOrigin(frame)
-        var size = frame.size
-        var pos = axPosition
+    private func setWindowFrame(_ windowElement: AnyObject, frame: CGRect, debugName: String = "") -> WindowRestoreResult.WindowRestoreStatus {
+        guard let coordinateConverter else { return .coordinateUnavailable }
+        let expectedPosition = coordinateConverter.screenFrameToAXOrigin(frame)
+        let expectedSize = frame.size
 
-        // Устанавливаем позицию и размер дважды — сначала позицию, потом размер, потом снова позицию.
-        // Это нужно потому что некоторые приложения (например Finder) клипают размер,
-        // что смещает позицию окна. Повторная установка позиции после размера это исправляет.
-
-        // 1. Позиция (первый раз — чтобы окно оказалось в нужном месте до изменения размера)
-        if let posValue = AXValueCreate(.cgPoint, &pos) {
-            AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, posValue)
+        let positionError = axClient.setPosition(expectedPosition, of: windowElement)
+        guard positionError == .success else {
+            print("[\(debugName)] position set failed: \(positionError.rawValue)")
+            return .axFailure
+        }
+        let sizeError = axClient.setSize(expectedSize, of: windowElement)
+        guard sizeError == .success else {
+            print("[\(debugName)] size set failed: \(sizeError.rawValue)")
+            return .axFailure
         }
 
-        usleep(50_000) // 50ms
-
-        // 2. Размер
-        if let sizeValue = AXValueCreate(.cgSize, &size) {
-            AXUIElementSetAttributeValue(windowElement, kAXSizeAttribute as CFString, sizeValue)
-        }
-
-        usleep(50_000) // 50ms
-
-        // 3. Позиция повторно — на случай если изменение размера сдвинуло окно
-        if let posValue = AXValueCreate(.cgPoint, &pos) {
-            let result = AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, posValue)
-            if result != .success {
-                usleep(100_000)
-                AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, posValue)
+        func readBack() -> AXOperationResult<(CGPoint, CGSize)> {
+            let positionResult = axClient.position(of: windowElement)
+            guard case .success(let position) = positionResult else {
+                if case .failure(let error) = positionResult { return .failure(error) }
+                return .failure(.failure)
             }
-        }
-
-        // 4. Проверка через 0.5с
-        let capturedElement = windowElement
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            var currentPosRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(capturedElement, kAXPositionAttribute as CFString, &currentPosRef)
-            guard let currentPosValue = currentPosRef else { return }
-
-            var currentPos = CGPoint.zero
-            AXValueGetValue(currentPosValue as! AXValue, .cgPoint, &currentPos)
-
-            let deltaX = abs(currentPos.x - axPosition.x)
-            let deltaY = abs(currentPos.y - axPosition.y)
-
-            if deltaX > 2 || deltaY > 2 {
-                print("⚠️ [\(debugName)] Drift (\(Int(deltaX)),\(Int(deltaY))), correcting...")
-                var corrPos = axPosition
-                if let posValue = AXValueCreate(.cgPoint, &corrPos) {
-                    AXUIElementSetAttributeValue(capturedElement, kAXPositionAttribute as CFString, posValue)
-                }
+            let sizeResult = axClient.size(of: windowElement)
+            guard case .success(let size) = sizeResult else {
+                if case .failure(let error) = sizeResult { return .failure(error) }
+                return .failure(.failure)
             }
+            return .success((position, size))
         }
+
+        guard case .success(let firstReadBack) = readBack() else {
+            print("[\(debugName)] read-back failed")
+            return .axFailure
+        }
+        let positionMatches = abs(firstReadBack.0.x - expectedPosition.x) <= 2 && abs(firstReadBack.0.y - expectedPosition.y) <= 2
+        let sizeMatches = abs(firstReadBack.1.width - expectedSize.width) <= 2 && abs(firstReadBack.1.height - expectedSize.height) <= 2
+        if positionMatches && sizeMatches { return .positionSet }
+
+        // One bounded retry is allowed only for position drift caused by the size change.
+        if !positionMatches {
+            let retryError = axClient.setPosition(expectedPosition, of: windowElement)
+            guard retryError == .success else { return .axFailure }
+            guard case .success(let finalReadBack) = readBack() else { return .axFailure }
+            let finalPositionMatches = abs(finalReadBack.0.x - expectedPosition.x) <= 2 && abs(finalReadBack.0.y - expectedPosition.y) <= 2
+            let finalSizeMatches = abs(finalReadBack.1.width - expectedSize.width) <= 2 && abs(finalReadBack.1.height - expectedSize.height) <= 2
+            if finalPositionMatches && finalSizeMatches { return .positionSet }
+            if finalSizeMatches { return .appImposedClamp }
+            return .appImposedClamp
+        }
+
+        return .appImposedClamp
     }
     func getScreensInfo() -> String {
         let screens = NSScreen.screens
