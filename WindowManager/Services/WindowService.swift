@@ -44,34 +44,16 @@ class WindowService: ObservableObject {
         return windows
     }
     
-    /// Высота главного экрана — база системы координат AX/Quartz.
-    /// NSScreen.main — экран с активной строкой меню.
-    private var mainScreenHeight: CGFloat {
-        (NSScreen.main ?? NSScreen.screens[0]).frame.height
-    }
-
-    /// Конвертирует NSScreen-frame окна в AX/Quartz origin (top-left угол окна).
-    /// NSScreen: origin = нижний-левый угол NSScreen.main, Y вверх.
-    /// AX/Quartz: origin = верхний-левый угол NSScreen.main, Y вниз.
-    ///
-    /// Формула: axY = mainScreenHeight - screenY - windowHeight
-    private func screenFrameToAXOrigin(_ frame: CGRect) -> CGPoint {
-        let h = mainScreenHeight
-        return CGPoint(
-            x: frame.origin.x,
-            y: h - frame.origin.y - frame.size.height
-        )
-    }
-
-    /// Конвертирует AX/Quartz позицию + размер в NSScreen-frame.
-    private func axOriginToScreenFrame(axOrigin: CGPoint, size: CGSize) -> CGRect {
-        let h = mainScreenHeight
-        return CGRect(
-            x: axOrigin.x,
-            y: h - axOrigin.y - size.height,
-            width: size.width,
-            height: size.height
-        )
+    /// The primary display anchors the global AX/Quartz coordinate space.
+    /// NSScreen.main is intentionally not used: it follows keyboard focus.
+    private var coordinateConverter: WindowCoordinateConverter? {
+        guard let primaryScreen = NSScreen.screens.first(where: {
+            guard let number = $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+                return false
+            }
+            return number.uint32Value == CGMainDisplayID()
+        }) else { return nil }
+        return WindowCoordinateConverter(primaryScreenFrame: primaryScreen.frame)
     }
 
     private func getWindowInfo(from windowElement: AXUIElement, appName: String, screens: [NSScreen]) -> WindowInfo? {
@@ -83,8 +65,8 @@ class WindowService: ObservableObject {
         AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef)
         let title = titleRef as? String ?? "Untitled"
         
-        // Получаем позицию в пространстве AX/Quartz:
-        //   origin = верхний-левый угол ГЛАВНОГО экрана (NSScreen.main), Y растёт вниз.
+        // Получаем позицию окна в пространстве AX/Quartz:
+        //   origin = верхний-левый угол первичного экрана, Y растёт вниз.
         AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &positionRef)
         var axPosition = CGPoint.zero
         if let positionValue = positionRef {
@@ -100,8 +82,12 @@ class WindowService: ObservableObject {
         
         guard size.width >= 50 && size.height >= 50 else { return nil }
 
-        // Конвертируем AX/Quartz → NSScreen (абсолютные координаты)
-        let screenFrame = axOriginToScreenFrame(axOrigin: axPosition, size: CGSize(width: max(size.width, 100), height: max(size.height, 100)))
+        // Конвертируем AX/Quartz → NSScreen (абсолютные координаты).
+        guard let coordinateConverter else { return nil }
+        let screenFrame = coordinateConverter.axOriginToScreenFrame(
+            axOrigin: axPosition,
+            size: CGSize(width: max(size.width, 100), height: max(size.height, 100))
+        )
 
         // Отсеиваем окна полностью вне всех экранов
         let allScreensUnion = screens.reduce(CGRect.null) { $0.union($1.frame) }
@@ -284,7 +270,8 @@ class WindowService: ObservableObject {
     }
     
     private func setWindowFrame(_ windowElement: AXUIElement, frame: CGRect, debugName: String = "") {
-        let axPosition = screenFrameToAXOrigin(frame)
+        guard let coordinateConverter else { return }
+        let axPosition = coordinateConverter.screenFrameToAXOrigin(frame)
         var size = frame.size
         var pos = axPosition
 
