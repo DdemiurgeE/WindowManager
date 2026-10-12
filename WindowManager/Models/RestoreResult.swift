@@ -44,9 +44,7 @@ struct RestoreResult {
 
     var windowsTotal: Int { windowsResults.count }
     var windowsRestored: Int {
-        windowsResults.filter {
-            $0.status == .windowMatched || $0.status == .positionSet || $0.status == .appImposedClamp
-        }.count
+        windowsResults.filter { $0.status == .positionSet }.count
     }
     var summaryDescription: String {
         "\(windowsRestored)/\(windowsTotal) windows restored"

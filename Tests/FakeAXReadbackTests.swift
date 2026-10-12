@@ -135,7 +135,17 @@ func run(_ ax: FakeAX, position: CGPoint, size: CGSize, shouldContinue: @escapin
             WindowRestoreResult(appName: "Fake", windowTitle: "Window", status: $0)
         })
         check(result.windowsTotal == statuses.count, "result total")
-        check(result.windowsRestored == 2 && result.summaryDescription == "2/7 windows restored", "result summary")
+        check(result.windowsRestored == 1 && result.summaryDescription == "1/7 windows restored", "result summary")
+        tests += 2
+
+        let matchedResult = RestoreResult(layoutName: "fake", windowsResults: [
+            WindowRestoreResult(appName: "Fake", windowTitle: "Window", status: .windowMatched)
+        ])
+        let clampedResult = RestoreResult(layoutName: "fake", windowsResults: [
+            WindowRestoreResult(appName: "Fake", windowTitle: "Window", status: .appImposedClamp)
+        ])
+        check(matchedResult.windowsRestored == 0 && matchedResult.summaryDescription == "0/1 windows restored", "window match is not restored")
+        check(clampedResult.windowsRestored == 0 && clampedResult.summaryDescription == "0/1 windows restored", "app clamp is not restored")
         tests += 2
 
         // Layout JSON written before relativeFrame/screenID existed remains readable.
