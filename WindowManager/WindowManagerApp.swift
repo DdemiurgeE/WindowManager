@@ -41,6 +41,7 @@ struct WindowManagerApp: App {
             windowService: windowService,
             layoutStorage: layoutStorage
         )
+        appDelegate.configureMainWindow(windowService: windowService, layoutStorage: layoutStorage)
         
         // Инициализируем мониторинг экранов
         ScreenMonitorService.shared.setup(
@@ -52,6 +53,8 @@ struct WindowManagerApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var mainWindow: NSWindow?
+    private var windowService: WindowService?
+    private var layoutStorage: LayoutStorageService?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         PermissionsService.shared.checkAllPermissions()
@@ -80,6 +83,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
     
+    func configureMainWindow(windowService: WindowService, layoutStorage: LayoutStorageService) {
+        self.windowService = windowService
+        self.layoutStorage = layoutStorage
+    }
+
     func openOrCreateMainWindow() {
         // Ищем существующее окно
         if let window = mainWindow, !window.isVisible {
@@ -97,5 +105,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
         }
+
+        guard let windowService, let layoutStorage else {
+            print("[AppDelegate] Main window services are not configured")
+            return
+        }
+        let content = ContentView()
+            .environmentObject(windowService)
+            .environmentObject(PermissionsService.shared)
+            .environmentObject(layoutStorage)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Window Manager"
+        window.contentViewController = NSHostingController(rootView: content)
+        window.center()
+        mainWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

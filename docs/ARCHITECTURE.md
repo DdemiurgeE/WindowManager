@@ -1,29 +1,17 @@
-# WindowManager Architecture
+# WindowManager architecture
 
-This document describes the current WindowManager application structure, its main services, data models, and user-scenario execution flow.
+This document describes the implemented WindowManager architecture and the restore algorithms used by the current code. It is intended for maintainers who need to understand what is persisted, how a target display is selected, and how automatic restore handles unstable topology and partial results.
 
-> Russian version: [`ARCHITECTURE.ru.md`](ARCHITECTURE.ru.md)
+Russian version: [`ARCHITECTURE.ru.md`](ARCHITECTURE.ru.md)
 
-## Purpose
+## Purpose and runtime components
 
-WindowManager automates restoring workspace window layouts on macOS. Its primary goal is to quickly return application windows to the right displays and positions after reconnecting monitors, switching workstations, or manually rearranging windows.
-
-The application is built as a SwiftUI + AppKit macOS app:
-
-- SwiftUI handles the main window, saved-layout list, and permissions screen.
-- AppKit is used for Menu Bar integration, application-window handling, and system display access.
-- Accessibility API (`ApplicationServices`) is used to read and change positions of windows belonging to other applications.
-- `UserDefaults` is used as the local storage for saved layouts.
-
-## High-level structure
+WindowManager is a SwiftUI + AppKit macOS menu-bar application that captures window layouts and restores them through the Accessibility API. SwiftUI provides the main window, layout list, save sheet, and permissions UI; AppKit provides the status item, running applications, displays, and application lifecycle; `UserDefaults` stores layouts locally; `ApplicationServices` reads and changes third-party window frames.
 
 ```text
 WindowManagerApp
-├── ContentView
-│   ├── Display Configuration
-│   ├── Quick Actions
-│   └── LayoutListView
-├── Settings → PermissionsView
+├── ContentView / LayoutListView / SaveLayoutSheet
+├── PermissionsView
 ├── StatusBarService
 ├── ScreenMonitorService
 ├── WindowService
@@ -31,307 +19,137 @@ WindowManagerApp
 └── PermissionsService
 ```
 
-Data flows:
+On startup, `WindowManagerApp` creates and injects `WindowService`, `PermissionsService`, and `LayoutStorageService`. When the main view is ready, it configures `StatusBarService` and `ScreenMonitorService`. The app remains available from the menu bar after the main window closes.
 
-```text
-Save Current Layout
-    ↓
-WindowService.captureCurrentLayout()
-    ↓
-[WindowInfo]
-    ↓
-Layout(name, windows, screenConfiguration)
-    ↓
-LayoutStorageService.saveLayout()
-    ↓
-UserDefaults["SavedLayouts"]
-```
+## Persisted data model
 
-```text
-Restore Layout
-    ↓
-LayoutListView / StatusBarService
-    ↓
-WindowService.restoreLayout(layout)
-    ↓
-AXUIElementSetAttributeValue(kAXPositionAttribute / kAXSizeAttribute)
-```
+`Layout` contains an id, user-visible name, captured `windows`, creation date, optional `lastUsed` date, and optional `screenConfiguration`. `LayoutStorageService` encodes the layouts as ISO-8601 JSON in `UserDefaults` under `SavedLayouts`; there is no export/import format or remote storage.
 
-```text
-Screen configuration changed
-    ↓
-ScreenMonitorService
-    ↓
-Find matching Layout.screenConfiguration
-    ↓
-Restore most recently used matching layout
-    ↓
-User notification
-```
+### WindowInfo
 
-## Entry point
+`WindowInfo` is the persisted description of one captured window:
 
-File: `WindowManager/WindowManagerApp.swift`
-
-`WindowManagerApp` creates three main `@StateObject` instances:
-
-- `WindowService`
-- `PermissionsService`
-- `LayoutStorageService`
-
-They are injected into the SwiftUI hierarchy via `environmentObject`.
-
-When the main window appears, `setupServices()` runs:
-
-1. `StatusBarService.shared.setup(...)` creates the Menu Bar item and menu.
-2. `ScreenMonitorService.shared.setup(...)` provides the services required for automatic layout application.
-
-`AppDelegate`:
-
-- checks permissions on launch;
-- keeps a reference to the main window;
-- prevents the app from terminating when the last window is closed, so it can keep running from the Menu Bar;
-- can show the main window again when the app is reopened.
-
-## Data models
-
-### `WindowInfo`
-
-File: `WindowManager/Models/WindowInfo.swift`
-
-Describes one saved window:
-
-| Field | Purpose |
+| Field | Meaning |
 | --- | --- |
-| `id` | Window record UUID |
-| `appName` | Application `localizedName` |
-| `windowTitle` | Window title from Accessibility API |
-| `frame` | Absolute `CGRect` in `NSScreen` coordinates |
-| `relativeFrame` | Normalized frame relative to the display |
-| `screenIndex` | Index of the display where the window was captured |
+| `id` | UUID used to correlate a window across restore attempts and retries |
+| `appName` | Localized application name |
+| `bundleIdentifier` | Optional bundle identifier; preferred over name when matching a running app |
+| `windowTitle` | Captured AX title |
+| `axRole`, `axSubrole` | Optional Accessibility role metadata used during assignment |
+| `frame` | Absolute frame in `NSScreen` coordinates |
+| `relativeFrame` | Optional normalized frame relative to the captured display |
+| `screenID` | Optional current-observation display identifier |
+| `savedDisplayFrame`, `savedVisibleFrame` | Display geometry captured with the window |
+| `preservePresentation` | Whether fullscreen/maximized-style presentation should avoid resolver clamping |
+| `savedScale` | Optional captured backing scale |
+| `screenIndex` | Captured display index, retained as a legacy fallback |
 | `timestamp` | Capture time |
 
-`relativeFrame` is the key mechanism that makes layouts resilient to monitor reconnection. Instead of relying only on absolute coordinates, the app stores the window position and size as fractions of the corresponding display:
+Older JSON remains decodable: the newer metadata fields are optional, and layouts without them use the resolver's legacy fallbacks rather than being rejected.
+
+### ScreenConfiguration
+
+A screen configuration stores sorted display IDs, a display count, and (for current captures) sorted display records containing ID, frame, visible frame, and backing scale. `NSScreenNumber` is represented as `screen_<number>` when available; otherwise the ID is derived from display geometry.
+
+These IDs are observation keys, not permanent hardware identities. macOS may assign a different number after hot-plugging. The resolver therefore accepts an ID only when it is usable and unique in the current display snapshot. Vendor/model/serial fingerprints are not persisted.
+
+## Capturing a layout
+
+`WindowService.captureCurrentLayout()`:
+
+1. Requires Accessibility permission.
+2. Enumerates running regular, non-terminated applications.
+3. Reads each application's AX windows and captures title, role, subrole, position, and size.
+4. Uses the primary display identified by `CGMainDisplayID()` as the anchor for AX/Quartz-to-`NSScreen` conversion; it does not use `NSScreen.main`, which follows keyboard focus.
+5. Skips windows smaller than 50×50 points and windows that do not intersect the union of current displays.
+6. Assigns a window to the display with the largest intersection area.
+7. Stores the absolute frame, normalized relative frame, display metadata, and matching metadata in `WindowInfo`.
+
+The normalized frame is calculated as:
 
 ```text
-x      = (window.x - screen.x) / screen.width
-y      = (window.y - screen.y) / screen.height
-width  = window.width / screen.width
-height = window.height / screen.height
+x      = (window.x - display.x) / display.width
+y      = (window.y - display.y) / display.height
+width  = window.width  / display.width
+height = window.height / display.height
 ```
 
-During restore, these values are converted back into the current display frame.
+AX/Quartz uses a top-left, downward-growing Y axis while `NSScreen` uses a bottom-left, upward-growing axis. `WindowCoordinateConverter` performs both directions using the primary display frame.
 
-### `Layout`
+## Restoring a layout
 
-File: `WindowManager/Models/Layout.swift`
+`WindowService.restoreLayout(_:, windowIDs:)` can restore all windows or only the supplied UUID subset. It returns a `RestoreResult`, including one `WindowRestoreResult` per requested target when the result can be determined. A partial retry therefore retains stable IDs instead of relying on array positions.
 
-Describes a saved layout:
+For each target, the service:
 
-| Field | Purpose |
-| --- | --- |
-| `id` | Layout UUID |
-| `name` | User-provided name |
-| `windows` | List of saved windows |
-| `createdAt` | Creation date |
-| `lastUsed` | Last time the layout was applied |
-| `screenConfiguration` | Display configuration at save time |
+1. Resolves a display and target frame through `ScreenResolver`.
+2. Matches a running app by bundle identifier when both sides have one, then falls back to localized name.
+3. Reads the app's current AX windows once and assigns targets using title/role/subrole/frame metadata through `WindowAssigner`.
+4. Uses the assigned AX element to set the frame.
+5. Reports the final status from AX operations and read-back, not merely from a successful set request.
 
-### `ScreenConfiguration`
+### Display selection and frame resolution
 
-Stores a sorted list of display identifiers and the display count. It is used to find layouts matching the currently connected displays.
+`ScreenResolver` selects a display in this order:
 
-A display identifier is built as follows:
+1. unique usable `screenID`;
+2. display containing the saved frame's center;
+3. captured `screenIndex`;
+4. deterministic first display ordering.
 
-1. If `NSScreenNumber` is available, `screen_<number>` is used.
-2. Otherwise the fallback is `screen_<width>x<height>_<x>_<y>`.
+An exact absolute frame is used only when saved display frame, visible frame, scale, and current display geometry are all available and equal. Otherwise a finite `relativeFrame` is converted to the selected display. If no usable relative frame exists, the saved absolute frame is retained as a legacy fallback. Unless `preservePresentation` is true, the candidate frame is clamped so a useful title-bar strip remains reachable within the current visible frame; the saved size is not silently reduced.
 
-## Services
+### AX frame write and read-back
 
-### `PermissionsService`
+`FrameRestoreEngine` writes position, waits briefly, writes size, waits briefly, writes position again, and reads position and size back. A bounded drift correction is performed when needed. The result is one of:
 
-File: `WindowManager/Services/PermissionsService.swift`
+- `positionSet`: read-back matches the target;
+- `appImposedClamp`: the app accepted the operation but retained a different frame;
+- `axFailure`: an AX set/read operation failed;
+- `restoreSuperseded`: the restore was invalidated before completion;
+- `coordinateUnavailable`: no primary display converter was available;
+- `appNotFound`, `windowSkipped`, or other matching statuses when the target could not be assigned.
 
-Handles checking and requesting macOS permissions:
+`RestoreResult.windowsRestored` counts only `positionSet`. `windowMatched` is an assignment state and is not counted as restored.
 
-- Accessibility: `AXIsProcessTrustedWithOptions`.
-- Screen Recording: attempts to read window information via `CGWindowListCopyWindowInfo`.
+## Automatic apply lifecycle
 
-It also opens the relevant System Settings pages via `x-apple.systempreferences` URL schemes.
+`ScreenMonitorService` observes `NSApplication.didChangeScreenParametersNotification` with a 0.5-second debounce. Every new topology event cancels pending stability work, retries, and pending notification state.
 
-### `WindowService`
+When Auto-apply is enabled (the `UserDefaults` key is `autoApplyEnabled`, default `true`):
 
-File: `WindowManager/Services/WindowService.swift`
+1. The service polls the display snapshot every 0.25 seconds.
+2. It requires three consecutive equal snapshots before applying; geometry and scale are part of the current snapshot.
+3. If stability is not reached within 10 seconds, it skips the auto-apply rather than treating an unstable topology as safe.
+4. It matches layouts by screen IDs and, when both configurations contain geometry, by complete `ScreenConfiguration` equality.
+5. It selects the most recently used matching layout (layouts with `lastUsed` sort ahead of never-used layouts).
+6. It records `started` and `completed`, `noMatch`, or `cancelled` events in an in-memory restore log capped at 20 entries.
+7. It marks the selected layout as used after the initial restore call.
 
-The main service for working with external application windows.
+Missing applications and windows are retried at most three times, one second apart. The retry set is computed by `WindowRestoreResult.id`; mixed or reordered result arrays cannot associate a status with the wrong window. A retry runs only for the current topology generation and only while Auto-apply remains enabled. A topology change or disabled toggle invalidates pending callbacks and prevents further writes.
 
-#### Capturing a layout
+The final notification is deferred until the initial attempt and all bounded retries finish, or until retrying is cancelled by the Auto-apply toggle. It is emitted at most once per attempt and reports the number of windows whose final status is `positionSet`. Notification delivery still depends on macOS notification authorization.
 
-`captureCurrentLayout()`:
+## Manual and menu-bar flows
 
-1. Checks the Accessibility permission.
-2. Gets `NSWorkspace.shared.runningApplications`.
-3. Filters regular applications with `activationPolicy == .regular`.
-4. Creates `AXUIElementCreateApplication(pid)` for each application.
-5. Reads `kAXWindowsAttribute`.
-6. For each window, reads:
-   - `kAXTitleAttribute`;
-   - `kAXPositionAttribute`;
-   - `kAXSizeAttribute`.
-7. Skips windows that are too small or completely outside all displays.
-8. Determines the display by the largest intersection area between the window and each screen.
-9. Stores both the absolute `frame` and the normalized `relativeFrame`.
+`LayoutListView` and `StatusBarService` call the same `WindowService.restoreLayout` path. The status-item menu is rebuilt when opened and includes saved layouts, save-current-layout, the Auto-apply toggle, open-window, and quit. Saving from the menu bar opens the main window and posts `ShowSaveLayoutAlert` for `ContentView`.
 
-#### AX and NSScreen coordinates
+## Backward compatibility and limitations
 
-Accessibility/Quartz and `NSScreen` use different Y axes:
+- Layouts are local `UserDefaults` JSON only; no export/import or synchronization exists.
+- Missing optional `WindowInfo` and `ScreenConfiguration` metadata is supported for older layouts. Such layouts may use frame-center, index, or absolute-frame fallbacks and cannot claim exact display identity.
+- The app does not launch missing applications.
+- Dynamic titles and changing application window sets can prevent assignment; bundle IDs and AX role metadata improve matching but do not guarantee it.
+- Some applications reject AX changes, clamp frames, or change them after read-back. The result reports that outcome rather than claiming success.
+- Accessibility is required for capture and restore. Screen Recording status is checked heuristically through window-list access.
+- Display IDs can change after reconnect; normalized coordinates adapt geometry but do not prove that two IDs refer to the same physical monitor.
+- No live GUI/display mutation was part of the automated verification. The WindowManager scheme has no test action, so `xcodebuild test` is not available for this target.
 
-- `NSScreen`: origin is the bottom-left corner of the main display; Y grows upward.
-- AX/Quartz: origin is the top-left corner of the main display; Y grows downward.
+## Verification evidence
 
-Because of this, the service contains coordinate converters:
+The implementation was verified at the approved commit with a successful Debug build, focused policy and result-mapping harnesses, reopen-lifecycle checks, and a clean diff check. The focused harnesses cover 17 auto-apply policy checks, 4 stable-ID retry-mapping checks, and the frame read-back cases. These checks exercise pure/injected logic; they do not replace a live GUI test.
 
-- `screenFrameToAXOrigin(_:)`
-- `axOriginToScreenFrame(axOrigin:size:)`
-
-Formula for converting an `NSScreen` frame to an AX origin:
-
-```text
-axY = mainScreenHeight - screenY - windowHeight
-```
-
-#### Restoring a layout
-
-`restoreLayout(_:)`:
-
-1. Checks the Accessibility permission.
-2. Gets currently running applications and the list of displays.
-3. Computes `targetFrame` for each `WindowInfo`.
-4. Finds the application by `localizedName == appName`.
-5. Finds the window by title. If the application has exactly one window, that window is used as a fallback.
-6. Sets position and size via the AX API.
-
-`setWindowFrame(...)` applies position and size in several steps:
-
-1. Position.
-2. Short delay.
-3. Size.
-4. Short delay.
-5. Position again.
-6. Deferred drift check after 0.5 seconds and an additional correction if needed.
-
-The second position update is necessary because some applications clip the requested window size, which can shift the window position.
-
-### `LayoutStorageService`
-
-File: `WindowManager/Services/LayoutStorageService.swift`
-
-Stores the `[Layout]` array in `UserDefaults`:
-
-- key: `SavedLayouts`;
-- encoder: `JSONEncoder`;
-- date strategy: `.iso8601`.
-
-Methods:
-
-- `saveLayout(_:)`
-- `deleteLayout(_:)`
-- `updateLayout(_:)`
-- `markLayoutAsUsed(_:)`
-
-### `ScreenMonitorService`
-
-File: `WindowManager/Services/ScreenMonitorService.swift`
-
-Monitors `NSApplication.didChangeScreenParametersNotification` with a 0.5-second debounce.
-
-When displays change:
-
-1. Builds a new `ScreenConfiguration`.
-2. Compares it with the current one.
-3. If the configuration changed and Auto-apply is enabled, searches for saved layouts with the same configuration.
-4. Sorts matching layouts by `lastUsed`.
-5. Applies the most recent layout after 1 second.
-6. Sends a `Window Manager — Layout '<name>' applied automatically` notification.
-
-Auto-apply is stored in `UserDefaults` under the `autoApplyEnabled` key. The default value is `true`.
-
-### `StatusBarService`
-
-File: `WindowManager/Services/StatusBarService.swift`
-
-Creates an `NSStatusItem` with the `macwindow.on.rectangle` system symbol and a dynamic menu.
-
-The menu is refreshed before each opening and contains:
-
-1. the list of saved layouts;
-2. `Save Current Layout...`;
-3. `Auto-apply Layouts`;
-4. `Open Window`;
-5. `Quit`.
-
-To start saving from the Menu Bar, the service opens the main window and posts the `ShowSaveLayoutAlert` notification, which is observed by `ContentView`.
-
-## UI components
-
-### `ContentView`
-
-File: `WindowManager/Views/ContentView.swift`
-
-The main application window. It consists of a left panel and a main content area.
-
-Left panel:
-
-- app icon and name;
-- short description;
-- Active status;
-- Auto-apply toggle.
-
-Main area:
-
-- `Display Configuration` — current displays;
-- `Quick Actions` — saving the current layout and refreshing display info;
-- `Saved Layouts` — saved layouts list.
-
-Saving a layout opens `SaveLayoutSheet`, which shows:
-
-- layout name;
-- display configuration;
-- detected windows list.
-
-### `LayoutListView`
-
-File: `WindowManager/Views/LayoutListView.swift`
-
-Shows saved layouts. For each layout it displays:
-
-- name;
-- number of windows;
-- creation date;
-- last-used date, if available;
-- Restore button.
-
-The context menu allows restoring or deleting a layout.
-
-### `PermissionsView`
-
-File: `WindowManager/Views/PermissionsView.swift`
-
-Settings screen for checking and granting Accessibility and Screen Recording permissions.
-
-## Limitations and edge behavior
-
-1. **The app does not launch missing applications.** If an application from the layout is not running, the corresponding window is skipped.
-2. **Windows are matched by title.** Dynamic titles can prevent exact restore matching.
-3. **Some windows cannot be moved.** Certain applications reject Accessibility frame changes or immediately adjust the frame back.
-4. **macOS permissions are critical.** Without Accessibility, capturing and restoring layouts do not work.
-5. **Screen Recording is detected heuristically.** The service checks whether it can read window names via `CGWindowListCopyWindowInfo`.
-6. **No layout export yet.** Layouts currently live only in local `UserDefaults`.
-7. **Auto-apply is tied to `ScreenConfiguration`.** If display identifiers change unpredictably, a matching layout may not be found.
-
-## Build verification
-
-Local verification command:
+Build command:
 
 ```bash
 xcodebuild \
@@ -342,14 +160,11 @@ xcodebuild \
   build
 ```
 
-If Xcode chooses between multiple destinations for Apple Silicon and Intel, that is normal; specify `arch=arm64` or `arch=x86_64` explicitly if needed.
-
 ## Possible future improvements
 
-- Export/import layouts as JSON.
-- Edit a saved layout without recapturing it.
-- More robust window matching: bundle identifier, process identifier, AXRole, AXSubrole.
-- Automatically launch applications that are missing during restore.
-- Keyboard shortcuts for saving and applying layouts.
-- Exclusion support: do not save/restore specific applications or windows.
-- Visual screen/window layout preview before saving.
+- Explicit export/import of layouts.
+- More robust matching for dynamic window titles.
+- Launching missing applications.
+- User-configurable exclusions and keyboard shortcuts.
+- A visual layout preview.
+- A verified composite display fingerprint, if a stable cross-version API becomes available.

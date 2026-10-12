@@ -3,9 +3,108 @@ import AppKit
 import ApplicationServices
 import Combine
 
+enum AXOperationResult<Value> {
+    case success(Value)
+    case failure(AXError)
+}
+
+protocol AXWindowClient {
+    func windows(for processIdentifier: pid_t) -> AXOperationResult<[AnyObject]>
+    func title(of window: AnyObject) -> AXOperationResult<String>
+    func role(of window: AnyObject) -> AXOperationResult<String>
+    func subrole(of window: AnyObject) -> AXOperationResult<String>
+    func position(of window: AnyObject) -> AXOperationResult<CGPoint>
+    func size(of window: AnyObject) -> AXOperationResult<CGSize>
+    func setPosition(_ position: CGPoint, of window: AnyObject) -> AXError
+    func setSize(_ size: CGSize, of window: AnyObject) -> AXError
+}
+
+struct SystemAXWindowClient: AXWindowClient {
+    final class Handle {
+        let element: AXUIElement
+        init(_ element: AXUIElement) { self.element = element }
+    }
+
+    func windows(for processIdentifier: pid_t) -> AXOperationResult<[AnyObject]> {
+        let app = AXUIElementCreateApplication(processIdentifier)
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+        guard error == .success, let elements = value as? [AXUIElement] else { return .failure(error) }
+        return .success(elements.map { Handle($0) as AnyObject })
+    }
+
+    func title(of window: AnyObject) -> AXOperationResult<String> {
+        guard let window = window as? Handle else { return .failure(.illegalArgument) }
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(window.element, kAXTitleAttribute as CFString, &value)
+        guard error == .success, let title = value as? String else { return .failure(error) }
+        return .success(title)
+    }
+
+    func role(of window: AnyObject) -> AXOperationResult<String> { attribute(kAXRoleAttribute, of: window) }
+    func subrole(of window: AnyObject) -> AXOperationResult<String> { attribute(kAXSubroleAttribute, of: window) }
+
+    private func attribute(_ name: String, of window: AnyObject) -> AXOperationResult<String> {
+        guard let window = window as? Handle else { return .failure(.illegalArgument) }
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(window.element, name as CFString, &value)
+        guard error == .success, let result = value as? String else { return .failure(error) }
+        return .success(result)
+    }
+
+    func position(of window: AnyObject) -> AXOperationResult<CGPoint> {
+        guard let window = window as? Handle else { return .failure(.illegalArgument) }
+        return read(.cgPoint, kAXPositionAttribute, window.element)
+    }
+    func size(of window: AnyObject) -> AXOperationResult<CGSize> {
+        guard let window = window as? Handle else { return .failure(.illegalArgument) }
+        return read(.cgSize, kAXSizeAttribute, window.element)
+    }
+
+    private func read<T>(_ type: AXValueType, _ attribute: String, _ element: AXUIElement) -> AXOperationResult<T> {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard error == .success, let value else { return .failure(error) }
+        let axValue = value as! AXValue
+        var result: T? = nil
+        if type == .cgPoint { var point = CGPoint.zero; guard AXValueGetValue(axValue, type, &point) else { return .failure(.failure) }; result = point as? T }
+        else { var size = CGSize.zero; guard AXValueGetValue(axValue, type, &size) else { return .failure(.failure) }; result = size as? T }
+        return result.map(AXOperationResult.success) ?? .failure(.failure)
+    }
+
+    func setPosition(_ position: CGPoint, of window: AnyObject) -> AXError {
+        guard let window = window as? Handle else { return .illegalArgument }
+        var value = position
+        guard let axValue = AXValueCreate(.cgPoint, &value) else { return .failure }
+        return AXUIElementSetAttributeValue(window.element, kAXPositionAttribute as CFString, axValue)
+    }
+
+    func setSize(_ size: CGSize, of window: AnyObject) -> AXError {
+        guard let window = window as? Handle else { return .illegalArgument }
+        var value = size
+        guard let axValue = AXValueCreate(.cgSize, &value) else { return .failure }
+        return AXUIElementSetAttributeValue(window.element, kAXSizeAttribute as CFString, axValue)
+    }
+}
+
 class WindowService: ObservableObject {
     @Published var currentWindows: [WindowInfo] = []
     @Published var isCapturing = false
+    private let axClient: AXWindowClient
+
+    init(axClient: AXWindowClient = SystemAXWindowClient()) {
+        self.axClient = axClient
+    }
+
+    private func axRole(_ window: AnyObject) -> String? {
+        guard case .success(let value) = axClient.role(of: window) else { return nil }
+        return value
+    }
+
+    private func axSubrole(_ window: AnyObject) -> String? {
+        guard case .success(let value) = axClient.subrole(of: window) else { return nil }
+        return value
+    }
     
     func captureCurrentLayout() -> [WindowInfo] {
         var windows: [WindowInfo] = []
@@ -30,7 +129,7 @@ class WindowService: ObservableObject {
             
             if result == .success, let windowArray = windowsRef as? [AXUIElement] {
                 for windowElement in windowArray {
-                    if let windowInfo = self.getWindowInfo(from: windowElement, appName: app.localizedName ?? "Unknown", screens: screens) {
+                    if let windowInfo = self.getWindowInfo(from: windowElement, appName: app.localizedName ?? "Unknown", bundleIdentifier: app.bundleIdentifier, screens: screens) {
                         windows.append(windowInfo)
                     }
                 }
@@ -44,47 +143,33 @@ class WindowService: ObservableObject {
         return windows
     }
     
-    /// Высота главного экрана — база системы координат AX/Quartz.
-    /// NSScreen.main — экран с активной строкой меню.
-    private var mainScreenHeight: CGFloat {
-        (NSScreen.main ?? NSScreen.screens[0]).frame.height
+    /// The primary display anchors the global AX/Quartz coordinate space.
+    /// NSScreen.main is intentionally not used: it follows keyboard focus.
+    private var coordinateConverter: WindowCoordinateConverter? {
+        guard let primaryScreen = NSScreen.screens.first(where: {
+            guard let number = $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+                return false
+            }
+            return number.uint32Value == CGMainDisplayID()
+        }) else { return nil }
+        return WindowCoordinateConverter(primaryScreenFrame: primaryScreen.frame)
     }
 
-    /// Конвертирует NSScreen-frame окна в AX/Quartz origin (top-left угол окна).
-    /// NSScreen: origin = нижний-левый угол NSScreen.main, Y вверх.
-    /// AX/Quartz: origin = верхний-левый угол NSScreen.main, Y вниз.
-    ///
-    /// Формула: axY = mainScreenHeight - screenY - windowHeight
-    private func screenFrameToAXOrigin(_ frame: CGRect) -> CGPoint {
-        let h = mainScreenHeight
-        return CGPoint(
-            x: frame.origin.x,
-            y: h - frame.origin.y - frame.size.height
-        )
-    }
-
-    /// Конвертирует AX/Quartz позицию + размер в NSScreen-frame.
-    private func axOriginToScreenFrame(axOrigin: CGPoint, size: CGSize) -> CGRect {
-        let h = mainScreenHeight
-        return CGRect(
-            x: axOrigin.x,
-            y: h - axOrigin.y - size.height,
-            width: size.width,
-            height: size.height
-        )
-    }
-
-    private func getWindowInfo(from windowElement: AXUIElement, appName: String, screens: [NSScreen]) -> WindowInfo? {
+    private func getWindowInfo(from windowElement: AXUIElement, appName: String, bundleIdentifier: String?, screens: [NSScreen]) -> WindowInfo? {
         var titleRef: CFTypeRef?
         var positionRef: CFTypeRef?
         var sizeRef: CFTypeRef?
+        var roleRef: CFTypeRef?
+        var subroleRef: CFTypeRef?
         
         // Получаем заголовок окна
         AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef)
+        AXUIElementCopyAttributeValue(windowElement, kAXRoleAttribute as CFString, &roleRef)
+        AXUIElementCopyAttributeValue(windowElement, kAXSubroleAttribute as CFString, &subroleRef)
         let title = titleRef as? String ?? "Untitled"
         
-        // Получаем позицию в пространстве AX/Quartz:
-        //   origin = верхний-левый угол ГЛАВНОГО экрана (NSScreen.main), Y растёт вниз.
+        // Получаем позицию окна в пространстве AX/Quartz:
+        //   origin = верхний-левый угол первичного экрана, Y растёт вниз.
         AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &positionRef)
         var axPosition = CGPoint.zero
         if let positionValue = positionRef {
@@ -100,8 +185,12 @@ class WindowService: ObservableObject {
         
         guard size.width >= 50 && size.height >= 50 else { return nil }
 
-        // Конвертируем AX/Quartz → NSScreen (абсолютные координаты)
-        let screenFrame = axOriginToScreenFrame(axOrigin: axPosition, size: CGSize(width: max(size.width, 100), height: max(size.height, 100)))
+        // Конвертируем AX/Quartz → NSScreen (абсолютные координаты).
+        guard let coordinateConverter else { return nil }
+        let screenFrame = coordinateConverter.axOriginToScreenFrame(
+            axOrigin: axPosition,
+            size: CGSize(width: max(size.width, 100), height: max(size.height, 100))
+        )
 
         // Отсеиваем окна полностью вне всех экранов
         let allScreensUnion = screens.reduce(CGRect.null) { $0.union($1.frame) }
@@ -130,7 +219,14 @@ class WindowService: ObservableObject {
             frame: screenFrame,
             screenIndex: screenIndex,
             relativeFrame: relativeFrame,
-            screenID: getScreenID(for: targetScreen)
+            screenID: getScreenID(for: targetScreen),
+            bundleIdentifier: bundleIdentifier,
+            axRole: roleRef as? String,
+            axSubrole: subroleRef as? String,
+            savedDisplayFrame: targetScreen.frame,
+            savedVisibleFrame: targetScreen.visibleFrame,
+            preservePresentation: screenFrame == targetScreen.frame || screenFrame == targetScreen.visibleFrame,
+            savedScale: targetScreen.backingScaleFactor
         )
     }
     
@@ -152,55 +248,83 @@ class WindowService: ObservableObject {
     }
     
     @discardableResult
-    func restoreLayout(_ layout: Layout) -> RestoreResult {
+    func restoreLayout(_ layout: Layout, windowIDs: Set<UUID>? = nil) -> RestoreResult {
         var results: [WindowRestoreResult] = []
+        let targets = windowIDs.map { ids in layout.windows.filter { ids.contains($0.id) } } ?? layout.windows
 
         guard PermissionsService.shared.checkAccessibilityPermission() else {
             print("No accessibility permission")
             return RestoreResult(layoutName: layout.name, windowsResults: results)
         }
         
-        let runningApps = NSWorkspace.shared.runningApplications
         let screens = NSScreen.screens
+        guard coordinateConverter != nil else {
+            let unavailable = targets.map { WindowRestoreResult(appName: $0.appName, windowTitle: $0.windowTitle, status: .coordinateUnavailable) }
+            return RestoreResult(layoutName: layout.name, windowsResults: unavailable)
+        }
+        let runningApps = NSWorkspace.shared.runningApplications
         
         print("=== Restoring layout: \(layout.name) ===")
         for (index, screen) in screens.enumerated() {
             print("Screen \(index): frame=\(screen.frame)")
         }
         
-        for windowInfo in layout.windows {
+        var assignmentStatuses: [UUID: WindowAssignmentStatus] = [:]
+        var assignedElements: [UUID: AnyObject] = [:]
+        var preparedApps = Set<pid_t>()
+
+        for windowInfo in targets {
             let targetFrame = resolveTargetFrame(for: windowInfo, screens: screens)
 
-            guard let app = runningApps.first(where: { $0.localizedName == windowInfo.appName }) else {
+            let app = runningApps.first(where: { windowInfo.bundleIdentifier != nil && $0.bundleIdentifier == windowInfo.bundleIdentifier })
+                ?? runningApps.first(where: { $0.localizedName == windowInfo.appName })
+            guard let app else {
                 print("  App not found: \(windowInfo.appName)")
-                results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .appNotFound))
+                results.append(WindowRestoreResult(id: windowInfo.id, appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .appNotFound))
                 continue
             }
             
-            let appRef = AXUIElementCreateApplication(app.processIdentifier)
-            var windowsRef: CFTypeRef?
-            
-            let result = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsRef)
-            
-            if result == .success, let windowArray = windowsRef as? [AXUIElement] {
-                var matched = false
-                for windowElement in windowArray {
-                    var titleRef: CFTypeRef?
-                    AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef)
-                    let title = titleRef as? String ?? ""
-                    
-                    if title == windowInfo.windowTitle || windowArray.count == 1 {
-                        self.setWindowFrame(windowElement, frame: targetFrame, debugName: "\(windowInfo.appName) — \(title)")
-                        results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: title, status: .positionSet))
-                        matched = true
-                        break
+            let pid = app.processIdentifier
+            if !preparedApps.contains(pid) {
+                preparedApps.insert(pid)
+                let appTargets = targets.filter {
+                    ($0.bundleIdentifier != nil && $0.bundleIdentifier == app.bundleIdentifier) ||
+                    ($0.bundleIdentifier == nil && $0.appName == app.localizedName)
+                }
+                if case .success(let windowArray) = axClient.windows(for: pid) {
+                    let snapshots = windowArray.enumerated().compactMap { index, element -> WindowAssignmentSnapshot? in
+                        guard case .success(let title) = axClient.title(of: element),
+                              case .success(let position) = axClient.position(of: element),
+                              case .success(let size) = axClient.size(of: element) else { return nil }
+                        let frame = coordinateConverter?.axOriginToScreenFrame(axOrigin: position, size: size) ?? CGRect(origin: position, size: size)
+                        return WindowAssignmentSnapshot(id: "\(pid):\(index)", bundleID: app.bundleIdentifier,
+                                              appName: app.localizedName ?? "Unknown", title: title,
+                                              role: axRole(element), subrole: axSubrole(element), frame: frame)
+                    }
+                    let assignments = WindowAssigner().assign(targets: appTargets.map {
+                        WindowAssignmentSnapshot(id: $0.id.uuidString, bundleID: $0.bundleIdentifier, appName: $0.appName,
+                                       title: $0.windowTitle == "Untitled" ? "" : $0.windowTitle,
+                                       role: $0.axRole, subrole: $0.axSubrole, frame: $0.frame)
+                    }, current: snapshots)
+                    for assignment in assignments {
+                        assignmentStatuses[UUID(uuidString: assignment.targetID)!] = assignment.status
+                        if case .matched(let currentID) = assignment.status,
+                           let index = Int(currentID.split(separator: ":").last ?? ""), index < windowArray.count {
+                            assignedElements[UUID(uuidString: assignment.targetID)!] = windowArray[index]
+                        }
                     }
                 }
-                if !matched {
-                    print("  Window skipped: \(windowInfo.windowTitle)")
-                    results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .windowSkipped))
-                }
             }
+
+            guard let assignment = assignmentStatuses[windowInfo.id],
+                  case .matched = assignment,
+                  let element = assignedElements[windowInfo.id],
+                  case .success(let title) = axClient.title(of: element) else {
+                results.append(WindowRestoreResult(id: windowInfo.id, appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .windowSkipped))
+                continue
+            }
+            let status = setWindowFrame(element, frame: targetFrame, debugName: "\(windowInfo.appName) — \(title)")
+            results.append(WindowRestoreResult(id: windowInfo.id, appName: windowInfo.appName, windowTitle: title, status: status))
         }
 
         print("[RestoreResult] \(RestoreResult(layoutName: layout.name, windowsResults: results).summaryDescription)")
@@ -209,132 +333,68 @@ class WindowService: ObservableObject {
 
     /// Вычисляет абсолютный targetFrame для окна при восстановлении.
     ///
-    /// Алгоритм:
-    /// 1. Если есть relativeFrame — пересчитываем через текущее положение экрана с нужным screenIndex.
-    /// 2. Если screenIndex вышел за пределы (мониторов стало меньше) — ищем наиболее похожий экран
-    ///    по разрешению среди доступных.
-    /// 3. Fallback — используем абсолютный frame как есть (для старых лэйаутов).
+    /// Display selection is deliberately completed before relative-frame conversion.
+    /// NSScreenNumber/CGDirectDisplayID is only a current-observation key: macOS may
+    /// assign a different number after hot-plug. It is therefore never treated as a
+    /// permanent vendor/model/serial hardware identity.
     private func resolveTargetFrame(for windowInfo: WindowInfo, screens: [NSScreen]) -> CGRect {
-        guard !screens.isEmpty else { return windowInfo.frame }
-
-        guard let relativeFrame = windowInfo.relativeFrame else {
+        let displays = screens.enumerated().map { index, screen in
+            DisplaySnapshot(screenID: getScreenID(for: screen), frame: screen.frame, visibleFrame: screen.visibleFrame, scale: screen.backingScaleFactor, index: index)
+        }
+        let snapshot = WindowSnapshot(
+            frame: windowInfo.frame,
+            relativeFrame: windowInfo.relativeFrame,
+            screenID: windowInfo.screenID,
+            screenIndex: windowInfo.screenIndex,
+            savedDisplayFrame: windowInfo.savedDisplayFrame,
+            savedVisibleFrame: windowInfo.savedVisibleFrame,
+            preservePresentation: windowInfo.preservePresentation ?? false,
+            savedScale: windowInfo.savedScale
+        )
+        guard let resolved = ScreenResolver().resolve(window: snapshot, displays: displays) else {
+            print("[WindowRestore] Window '\(windowInfo.appName)' has no available display; using saved frame")
             return windowInfo.frame
         }
-
-        func computeFrame(for screen: NSScreen) -> CGRect {
-            CGRect(
-                x: screen.frame.origin.x + relativeFrame.origin.x * screen.frame.width,
-                y: screen.frame.origin.y + relativeFrame.origin.y * screen.frame.height,
-                width: relativeFrame.width * screen.frame.width,
-                height: relativeFrame.height * screen.frame.height
-            )
-        }
-
-        func isCenterInside(frame: CGRect, screen: NSScreen) -> Bool {
-            let center = CGPoint(x: frame.midX, y: frame.midY)
-            return screen.frame.contains(center)
-        }
-
-        // Prefer the stable display ID. NSScreen.screens order is not stable
-        // across monitor reconnects, so an index alone can move every window
-        // to a different display.
-        let preferredIndex: Int
-        if let savedScreenID = windowInfo.screenID,
-           let stableIndex = screens.firstIndex(where: { getScreenID(for: $0) == savedScreenID }) {
-            preferredIndex = stableIndex
-            print("[WindowRestore] Window '\(windowInfo.appName)' matched saved display \(savedScreenID) at current index \(stableIndex)")
-        } else {
-            // Legacy layouts have no stable display ID.
-            preferredIndex = min(max(windowInfo.screenIndex, 0), screens.count - 1)
-            print("[WindowRestore] Window '\(windowInfo.appName)' using legacy display index \(preferredIndex)")
-        }
-        let preferredScreen = screens[preferredIndex]
-        let preferredFrame = computeFrame(for: preferredScreen)
-
-        if isCenterInside(frame: preferredFrame, screen: preferredScreen) {
-             print("[WindowRestore] Window '\(windowInfo.appName)' → screen \(preferredIndex) (bounds check passed)")
-            return preferredFrame
-        }
-
-        // Strategy 2: Find any screen whose bounds contain the window center
-        for (index, screen) in screens.enumerated() {
-            guard index != preferredIndex else { continue }
-            let candidateFrame = computeFrame(for: screen)
-            if isCenterInside(frame: candidateFrame, screen: screen) {
-                print("[WindowRestore] Window '\(windowInfo.appName)' → screen \(index) (fallback: preferred screen \(preferredIndex) didn't contain center)")
-                return candidateFrame
-            }
-        }
-
-        // Strategy 3: Last resort — screen with maximum overlap
-        var bestIndex = preferredIndex
-        var bestOverlap: CGFloat = 0
-        for (index, screen) in screens.enumerated() {
-            let candidateFrame = computeFrame(for: screen)
-            let intersection = screen.frame.intersection(candidateFrame)
-            let area = intersection.width * intersection.height
-            if area > bestOverlap {
-                bestOverlap = area
-                bestIndex = index
-            }
-        }
-        let bestFrame = computeFrame(for: screens[bestIndex])
-        print("[WindowRestore] Window '\(windowInfo.appName)' → screen \(bestIndex) (overlap fallback: \(String(format: "%.0f", bestOverlap)) px²)")
-        return bestFrame
+        print("[WindowRestore] Window '\(windowInfo.appName)' selected display index \(resolved.display.index) via \(resolved.selection)")
+        return resolved.frame
     }
     
-    private func setWindowFrame(_ windowElement: AXUIElement, frame: CGRect, debugName: String = "") {
-        let axPosition = screenFrameToAXOrigin(frame)
-        var size = frame.size
-        var pos = axPosition
-
-        // Устанавливаем позицию и размер дважды — сначала позицию, потом размер, потом снова позицию.
-        // Это нужно потому что некоторые приложения (например Finder) клипают размер,
-        // что смещает позицию окна. Повторная установка позиции после размера это исправляет.
-
-        // 1. Позиция (первый раз — чтобы окно оказалось в нужном месте до изменения размера)
-        if let posValue = AXValueCreate(.cgPoint, &pos) {
-            AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, posValue)
-        }
-
-        usleep(50_000) // 50ms
-
-        // 2. Размер
-        if let sizeValue = AXValueCreate(.cgSize, &size) {
-            AXUIElementSetAttributeValue(windowElement, kAXSizeAttribute as CFString, sizeValue)
-        }
-
-        usleep(50_000) // 50ms
-
-        // 3. Позиция повторно — на случай если изменение размера сдвинуло окно
-        if let posValue = AXValueCreate(.cgPoint, &pos) {
-            let result = AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, posValue)
-            if result != .success {
-                usleep(100_000)
-                AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, posValue)
-            }
-        }
-
-        // 4. Проверка через 0.5с
-        let capturedElement = windowElement
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            var currentPosRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(capturedElement, kAXPositionAttribute as CFString, &currentPosRef)
-            guard let currentPosValue = currentPosRef else { return }
-
-            var currentPos = CGPoint.zero
-            AXValueGetValue(currentPosValue as! AXValue, .cgPoint, &currentPos)
-
-            let deltaX = abs(currentPos.x - axPosition.x)
-            let deltaY = abs(currentPos.y - axPosition.y)
-
-            if deltaX > 2 || deltaY > 2 {
-                print("⚠️ [\(debugName)] Drift (\(Int(deltaX)),\(Int(deltaY))), correcting...")
-                var corrPos = axPosition
-                if let posValue = AXValueCreate(.cgPoint, &corrPos) {
-                    AXUIElementSetAttributeValue(capturedElement, kAXPositionAttribute as CFString, posValue)
+    private func setWindowFrame(_ windowElement: AnyObject, frame: CGRect, debugName: String = "") -> WindowRestoreResult.WindowRestoreStatus {
+        guard let coordinateConverter else { return .coordinateUnavailable }
+        let expectedPosition = coordinateConverter.screenFrameToAXOrigin(frame)
+        let expectedSize = frame.size
+        let engine = FrameRestoreEngine()
+        let outcome = engine.restore(
+            position: expectedPosition,
+            size: expectedSize,
+            setPosition: { position in
+                let error = self.axClient.setPosition(position, of: windowElement)
+                return error == .success ? .success(()) : .failure(.message("position set AXError \(error.rawValue)"))
+            },
+            setSize: { size in
+                let error = self.axClient.setSize(size, of: windowElement)
+                return error == .success ? .success(()) : .failure(.message("size set AXError \(error.rawValue)"))
+            },
+            read: {
+                let positionResult = self.axClient.position(of: windowElement)
+                guard case .success(let position) = positionResult else {
+                    if case .failure(let error) = positionResult { return .failure(.message("position read AXError \(error.rawValue)")) }
+                    return .failure(.message("position read failed"))
                 }
-            }
+                let sizeResult = self.axClient.size(of: windowElement)
+                guard case .success(let size) = sizeResult else {
+                    if case .failure(let error) = sizeResult { return .failure(.message("size read AXError \(error.rawValue)")) }
+                    return .failure(.message("size read failed"))
+                }
+                return .success(WindowFrameReadback(position: position, size: size))
+            },
+            onError: { print("[\(debugName)] \($0)") }
+        )
+        switch outcome {
+        case .exact: return .positionSet
+        case .appImposedClamp: return .appImposedClamp
+        case .axFailure: return .axFailure
+        case .superseded: return .restoreSuperseded
         }
     }
     func getScreensInfo() -> String {
