@@ -4,8 +4,8 @@ import CoreGraphics
 private func window(_ id: String, bundle: String? = "com.example.editor",
                     app: String = "Editor", title: String = "",
                     role: String? = "AXWindow", subrole: String? = nil,
-                    x: CGFloat = 0, y: CGFloat = 0) -> WindowSnapshot {
-    WindowSnapshot(id: id, bundleID: bundle, appName: app, title: title,
+                    x: CGFloat = 0, y: CGFloat = 0) -> WindowAssignmentSnapshot {
+    WindowAssignmentSnapshot(id: id, bundleID: bundle, appName: app, title: title,
                    role: role, subrole: subrole,
                    frame: CGRect(x: x, y: y, width: 400, height: 300))
 }
@@ -71,6 +71,12 @@ struct WindowAssignmentTests {
             check(assigner.assign(targets: [target], current: [wrongBundle]) ==
                   [WindowAssignment(targetID: "legacy", status: .skipped(reason: .noIdentityMatch))],
                   "bundle identity wins over same app name")
+
+            let renamed = window("renamed", bundle: "com.example.editor", app: "Localized Editor", title: "Document")
+            let original = window("original", bundle: "com.example.editor", app: "Old Editor", title: "Document")
+            check(assigner.assign(targets: [renamed], current: [original]) ==
+                  [WindowAssignment(targetID: "renamed", status: .matched(currentID: "original"))],
+                  "bundle identity survives localized name change")
         }
 
         print("WindowAssignmentTests: all tests passed")

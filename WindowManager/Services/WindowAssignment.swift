@@ -3,7 +3,7 @@ import CoreGraphics
 
 /// A platform-neutral description of a window. AXUIElement values must be
 /// converted to this value before calling WindowAssignment.
-struct WindowSnapshot: Equatable {
+struct WindowAssignmentSnapshot: Equatable {
     let id: String
     let bundleID: String?
     let appName: String
@@ -49,7 +49,7 @@ struct WindowAssignment: Equatable {
 /// agree and geometry selects exactly one candidate. Ties are reported as
 /// ambiguous so callers can leave the real windows untouched.
 struct WindowAssigner {
-    func assign(targets: [WindowSnapshot], current: [WindowSnapshot]) -> [WindowAssignment] {
+    func assign(targets: [WindowAssignmentSnapshot], current: [WindowAssignmentSnapshot]) -> [WindowAssignment] {
         var used = Set<String>()
         var results: [WindowAssignment] = []
 
@@ -99,7 +99,7 @@ struct WindowAssigner {
         return results
     }
 
-    private func sameIdentity(_ target: WindowSnapshot, _ current: WindowSnapshot) -> Bool {
+    private func sameIdentity(_ target: WindowAssignmentSnapshot, _ current: WindowAssignmentSnapshot) -> Bool {
         if let targetBundle = nonEmpty(target.bundleID),
            let currentBundle = nonEmpty(current.bundleID) {
             return targetBundle == currentBundle
@@ -109,7 +109,7 @@ struct WindowAssigner {
             !target.appName.isEmpty && target.appName == current.appName
     }
 
-    private func compatibleRole(_ target: WindowSnapshot, _ current: WindowSnapshot) -> Bool {
+    private func compatibleRole(_ target: WindowAssignmentSnapshot, _ current: WindowAssignmentSnapshot) -> Bool {
         if let role = nonEmpty(target.role), role != current.role { return false }
         if let subrole = nonEmpty(target.subrole), subrole != current.subrole { return false }
         return true

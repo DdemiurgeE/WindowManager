@@ -11,6 +11,8 @@ enum AXOperationResult<Value> {
 protocol AXWindowClient {
     func windows(for processIdentifier: pid_t) -> AXOperationResult<[AnyObject]>
     func title(of window: AnyObject) -> AXOperationResult<String>
+    func role(of window: AnyObject) -> AXOperationResult<String>
+    func subrole(of window: AnyObject) -> AXOperationResult<String>
     func position(of window: AnyObject) -> AXOperationResult<CGPoint>
     func size(of window: AnyObject) -> AXOperationResult<CGSize>
     func setPosition(_ position: CGPoint, of window: AnyObject) -> AXError
@@ -37,6 +39,17 @@ struct SystemAXWindowClient: AXWindowClient {
         let error = AXUIElementCopyAttributeValue(window.element, kAXTitleAttribute as CFString, &value)
         guard error == .success, let title = value as? String else { return .failure(error) }
         return .success(title)
+    }
+
+    func role(of window: AnyObject) -> AXOperationResult<String> { attribute(kAXRoleAttribute, of: window) }
+    func subrole(of window: AnyObject) -> AXOperationResult<String> { attribute(kAXSubroleAttribute, of: window) }
+
+    private func attribute(_ name: String, of window: AnyObject) -> AXOperationResult<String> {
+        guard let window = window as? Handle else { return .failure(.illegalArgument) }
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(window.element, name as CFString, &value)
+        guard error == .success, let result = value as? String else { return .failure(error) }
+        return .success(result)
     }
 
     func position(of window: AnyObject) -> AXOperationResult<CGPoint> {
@@ -82,6 +95,16 @@ class WindowService: ObservableObject {
     init(axClient: AXWindowClient = SystemAXWindowClient()) {
         self.axClient = axClient
     }
+
+    private func axRole(_ window: AnyObject) -> String? {
+        guard case .success(let value) = axClient.role(of: window) else { return nil }
+        return value
+    }
+
+    private func axSubrole(_ window: AnyObject) -> String? {
+        guard case .success(let value) = axClient.subrole(of: window) else { return nil }
+        return value
+    }
     
     func captureCurrentLayout() -> [WindowInfo] {
         var windows: [WindowInfo] = []
@@ -106,7 +129,7 @@ class WindowService: ObservableObject {
             
             if result == .success, let windowArray = windowsRef as? [AXUIElement] {
                 for windowElement in windowArray {
-                    if let windowInfo = self.getWindowInfo(from: windowElement, appName: app.localizedName ?? "Unknown", screens: screens) {
+                    if let windowInfo = self.getWindowInfo(from: windowElement, appName: app.localizedName ?? "Unknown", bundleIdentifier: app.bundleIdentifier, screens: screens) {
                         windows.append(windowInfo)
                     }
                 }
@@ -132,13 +155,17 @@ class WindowService: ObservableObject {
         return WindowCoordinateConverter(primaryScreenFrame: primaryScreen.frame)
     }
 
-    private func getWindowInfo(from windowElement: AXUIElement, appName: String, screens: [NSScreen]) -> WindowInfo? {
+    private func getWindowInfo(from windowElement: AXUIElement, appName: String, bundleIdentifier: String?, screens: [NSScreen]) -> WindowInfo? {
         var titleRef: CFTypeRef?
         var positionRef: CFTypeRef?
         var sizeRef: CFTypeRef?
+        var roleRef: CFTypeRef?
+        var subroleRef: CFTypeRef?
         
         // Получаем заголовок окна
         AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef)
+        AXUIElementCopyAttributeValue(windowElement, kAXRoleAttribute as CFString, &roleRef)
+        AXUIElementCopyAttributeValue(windowElement, kAXSubroleAttribute as CFString, &subroleRef)
         let title = titleRef as? String ?? "Untitled"
         
         // Получаем позицию окна в пространстве AX/Quartz:
@@ -192,7 +219,10 @@ class WindowService: ObservableObject {
             frame: screenFrame,
             screenIndex: screenIndex,
             relativeFrame: relativeFrame,
-            screenID: getScreenID(for: targetScreen)
+            screenID: getScreenID(for: targetScreen),
+            bundleIdentifier: bundleIdentifier,
+            axRole: roleRef as? String,
+            axSubrole: subroleRef as? String
         )
     }
     
@@ -234,35 +264,62 @@ class WindowService: ObservableObject {
             print("Screen \(index): frame=\(screen.frame)")
         }
         
+        var assignmentStatuses: [UUID: WindowAssignmentStatus] = [:]
+        var assignedElements: [UUID: AnyObject] = [:]
+        var preparedApps = Set<pid_t>()
+
         for windowInfo in layout.windows {
             let targetFrame = resolveTargetFrame(for: windowInfo, screens: screens)
 
-            guard let app = runningApps.first(where: { $0.localizedName == windowInfo.appName }) else {
+            let app = runningApps.first(where: { windowInfo.bundleIdentifier != nil && $0.bundleIdentifier == windowInfo.bundleIdentifier })
+                ?? runningApps.first(where: { $0.localizedName == windowInfo.appName })
+            guard let app else {
                 print("  App not found: \(windowInfo.appName)")
                 results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .appNotFound))
                 continue
             }
             
-            switch axClient.windows(for: app.processIdentifier) {
-            case .failure(let error):
-                print("  AX windows failed for \(windowInfo.appName): \(error.rawValue)")
-                results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .axFailure))
-            case .success(let windowArray):
-                var matched = false
-                for windowElement in windowArray {
-                    guard case .success(let title) = axClient.title(of: windowElement) else { continue }
-                    if title == windowInfo.windowTitle || windowArray.count == 1 {
-                        let status = self.setWindowFrame(windowElement, frame: targetFrame, debugName: "\(windowInfo.appName) — \(title)")
-                        results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: title, status: status))
-                        matched = true
-                        break
+            let pid = app.processIdentifier
+            if !preparedApps.contains(pid) {
+                preparedApps.insert(pid)
+                let appTargets = layout.windows.filter {
+                    ($0.bundleIdentifier != nil && $0.bundleIdentifier == app.bundleIdentifier) ||
+                    ($0.bundleIdentifier == nil && $0.appName == app.localizedName)
+                }
+                if case .success(let windowArray) = axClient.windows(for: pid) {
+                    let snapshots = windowArray.enumerated().compactMap { index, element -> WindowAssignmentSnapshot? in
+                        guard case .success(let title) = axClient.title(of: element),
+                              case .success(let position) = axClient.position(of: element),
+                              case .success(let size) = axClient.size(of: element) else { return nil }
+                        let frame = coordinateConverter?.axOriginToScreenFrame(axOrigin: position, size: size) ?? CGRect(origin: position, size: size)
+                        return WindowAssignmentSnapshot(id: "\(pid):\(index)", bundleID: app.bundleIdentifier,
+                                              appName: app.localizedName ?? "Unknown", title: title,
+                                              role: axRole(element), subrole: axSubrole(element), frame: frame)
+                    }
+                    let assignments = WindowAssigner().assign(targets: appTargets.map {
+                        WindowAssignmentSnapshot(id: $0.id.uuidString, bundleID: $0.bundleIdentifier, appName: $0.appName,
+                                       title: $0.windowTitle == "Untitled" ? "" : $0.windowTitle,
+                                       role: $0.axRole, subrole: $0.axSubrole, frame: $0.frame)
+                    }, current: snapshots)
+                    for assignment in assignments {
+                        assignmentStatuses[UUID(uuidString: assignment.targetID)!] = assignment.status
+                        if case .matched(let currentID) = assignment.status,
+                           let index = Int(currentID.split(separator: ":").last ?? ""), index < windowArray.count {
+                            assignedElements[UUID(uuidString: assignment.targetID)!] = windowArray[index]
+                        }
                     }
                 }
-                if !matched {
-                    print("  Window skipped: \(windowInfo.windowTitle)")
-                    results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .windowSkipped))
-                }
             }
+
+            guard let assignment = assignmentStatuses[windowInfo.id],
+                  case .matched = assignment,
+                  let element = assignedElements[windowInfo.id],
+                  case .success(let title) = axClient.title(of: element) else {
+                results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .windowSkipped))
+                continue
+            }
+            let status = setWindowFrame(element, frame: targetFrame, debugName: "\(windowInfo.appName) — \(title)")
+            results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: title, status: status))
         }
 
         print("[RestoreResult] \(RestoreResult(layoutName: layout.name, windowsResults: results).summaryDescription)")
