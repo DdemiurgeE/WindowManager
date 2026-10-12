@@ -349,53 +349,39 @@ class WindowService: ObservableObject {
         guard let coordinateConverter else { return .coordinateUnavailable }
         let expectedPosition = coordinateConverter.screenFrameToAXOrigin(frame)
         let expectedSize = frame.size
-
-        let positionError = axClient.setPosition(expectedPosition, of: windowElement)
-        guard positionError == .success else {
-            print("[\(debugName)] position set failed: \(positionError.rawValue)")
-            return .axFailure
+        let engine = FrameRestoreEngine()
+        let outcome = engine.restore(
+            position: expectedPosition,
+            size: expectedSize,
+            setPosition: { position in
+                let error = self.axClient.setPosition(position, of: windowElement)
+                return error == .success ? .success(()) : .failure(.message("position set AXError \(error.rawValue)"))
+            },
+            setSize: { size in
+                let error = self.axClient.setSize(size, of: windowElement)
+                return error == .success ? .success(()) : .failure(.message("size set AXError \(error.rawValue)"))
+            },
+            read: {
+                let positionResult = self.axClient.position(of: windowElement)
+                guard case .success(let position) = positionResult else {
+                    if case .failure(let error) = positionResult { return .failure(.message("position read AXError \(error.rawValue)")) }
+                    return .failure(.message("position read failed"))
+                }
+                let sizeResult = self.axClient.size(of: windowElement)
+                guard case .success(let size) = sizeResult else {
+                    if case .failure(let error) = sizeResult { return .failure(.message("size read AXError \(error.rawValue)")) }
+                    return .failure(.message("size read failed"))
+                }
+                return .success(WindowFrameReadback(position: position, size: size))
+            },
+            onError: { print("[\(debugName)] \($0)") }
+        )
+        switch outcome {
+        case .exact: return .positionSet
+        case .appImposedClamp: return .appImposedClamp
+        case .axFailure: return .axFailure
+        case .superseded: return .restoreSuperseded
         }
-        let sizeError = axClient.setSize(expectedSize, of: windowElement)
-        guard sizeError == .success else {
-            print("[\(debugName)] size set failed: \(sizeError.rawValue)")
-            return .axFailure
-        }
-
-        func readBack() -> AXOperationResult<(CGPoint, CGSize)> {
-            let positionResult = axClient.position(of: windowElement)
-            guard case .success(let position) = positionResult else {
-                if case .failure(let error) = positionResult { return .failure(error) }
-                return .failure(.failure)
-            }
-            let sizeResult = axClient.size(of: windowElement)
-            guard case .success(let size) = sizeResult else {
-                if case .failure(let error) = sizeResult { return .failure(error) }
-                return .failure(.failure)
-            }
-            return .success((position, size))
-        }
-
-        guard case .success(let firstReadBack) = readBack() else {
-            print("[\(debugName)] read-back failed")
-            return .axFailure
-        }
-        let positionMatches = abs(firstReadBack.0.x - expectedPosition.x) <= 2 && abs(firstReadBack.0.y - expectedPosition.y) <= 2
-        let sizeMatches = abs(firstReadBack.1.width - expectedSize.width) <= 2 && abs(firstReadBack.1.height - expectedSize.height) <= 2
-        if positionMatches && sizeMatches { return .positionSet }
-
-        // One bounded retry is allowed only for position drift caused by the size change.
-        if !positionMatches {
-            let retryError = axClient.setPosition(expectedPosition, of: windowElement)
-            guard retryError == .success else { return .axFailure }
-            guard case .success(let finalReadBack) = readBack() else { return .axFailure }
-            let finalPositionMatches = abs(finalReadBack.0.x - expectedPosition.x) <= 2 && abs(finalReadBack.0.y - expectedPosition.y) <= 2
-            let finalSizeMatches = abs(finalReadBack.1.width - expectedSize.width) <= 2 && abs(finalReadBack.1.height - expectedSize.height) <= 2
-            if finalPositionMatches && finalSizeMatches { return .positionSet }
-            if finalSizeMatches { return .appImposedClamp }
-            return .appImposedClamp
-        }
-
-        return .appImposedClamp
     }
     func getScreensInfo() -> String {
         let screens = NSScreen.screens

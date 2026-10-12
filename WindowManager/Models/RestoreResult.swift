@@ -26,6 +26,8 @@ struct WindowRestoreResult: Codable, Identifiable {
         case axFailure
         /// The primary display was not available for coordinate conversion.
         case coordinateUnavailable
+        /// A newer restore superseded this restore before its read-back finished.
+        case restoreSuperseded
     }
 
     init(appName: String, windowTitle: String, status: WindowRestoreStatus) {
