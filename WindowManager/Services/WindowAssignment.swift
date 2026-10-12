@@ -51,21 +51,31 @@ struct WindowAssignment: Equatable {
 struct WindowAssigner {
     func assign(targets: [WindowAssignmentSnapshot], current: [WindowAssignmentSnapshot]) -> [WindowAssignment] {
         var used = Set<String>()
-        var results: [WindowAssignment] = []
+        var results = Array<WindowAssignment?>(repeating: nil, count: targets.count)
 
-        for target in targets {
+        // Match constrained targets first. Otherwise a target with no title can
+        // consume the only exact-title candidate needed by a later target.
+        let processingOrder = targets.indices.sorted { lhs, rhs in
+            let left = matchPriority(targets[lhs], current: current)
+            let right = matchPriority(targets[rhs], current: current)
+            if left != right { return left > right }
+            return targets[lhs].id < targets[rhs].id
+        }
+
+        for targetIndex in processingOrder {
+            let target = targets[targetIndex]
             let available = current.filter { !used.contains($0.id) }
             let identityMatches = available.filter { sameIdentity(target, $0) }
             guard !identityMatches.isEmpty else {
-                results.append(WindowAssignment(targetID: target.id,
-                                                status: .skipped(reason: .noIdentityMatch)))
+                results[targetIndex] = WindowAssignment(targetID: target.id,
+                                                        status: .skipped(reason: .noIdentityMatch))
                 continue
             }
 
             let compatible = identityMatches.filter { compatibleRole(target, $0) }
             guard !compatible.isEmpty else {
-                results.append(WindowAssignment(targetID: target.id,
-                                                status: .skipped(reason: .noCompatibleWindow)))
+                results[targetIndex] = WindowAssignment(targetID: target.id,
+                                                        status: .skipped(reason: .noCompatibleWindow))
                 continue
             }
 
@@ -79,34 +89,45 @@ struct WindowAssigner {
             }
 
             guard let best = ranked.first else {
-                results.append(WindowAssignment(targetID: target.id,
-                                                status: .skipped(reason: .noCompatibleWindow)))
+                results[targetIndex] = WindowAssignment(targetID: target.id,
+                                                        status: .skipped(reason: .noCompatibleWindow))
                 continue
             }
             let bestDistance = geometryDistance(target.frame, best.frame)
             let tied = ranked.filter { geometryDistance(target.frame, $0.frame) == bestDistance }
             if tied.count != 1 {
-                results.append(WindowAssignment(
+                results[targetIndex] = WindowAssignment(
                     targetID: target.id,
-                    status: .ambiguous(candidateIDs: tied.map(\.id).sorted())))
+                    status: .ambiguous(candidateIDs: tied.map(\.id).sorted()))
                 continue
             }
 
             used.insert(best.id)
-            results.append(WindowAssignment(targetID: target.id,
-                                            status: .matched(currentID: best.id)))
+            results[targetIndex] = WindowAssignment(targetID: target.id,
+                                                    status: .matched(currentID: best.id))
         }
-        return results
+        return results.compactMap { $0 }
+    }
+
+    private func matchPriority(_ target: WindowAssignmentSnapshot,
+                               current: [WindowAssignmentSnapshot]) -> Int {
+        let compatible = current.filter { sameIdentity(target, $0) && compatibleRole(target, $0) }
+        if !target.title.isEmpty && compatible.contains(where: { $0.title == target.title }) {
+            return 3 // exact-title targets are the most constrained
+        }
+        if !target.title.isEmpty { return 2 }
+        return 1
     }
 
     private func sameIdentity(_ target: WindowAssignmentSnapshot, _ current: WindowAssignmentSnapshot) -> Bool {
-        if let targetBundle = nonEmpty(target.bundleID),
-           let currentBundle = nonEmpty(current.bundleID) {
-            return targetBundle == currentBundle
+        if let targetBundle = nonEmpty(target.bundleID) {
+            // A saved bundle ID is authoritative; never fall back to a name.
+            return nonEmpty(current.bundleID) == targetBundle
         }
         // Layouts created before bundle IDs were captured use the app name.
-        return target.bundleID == nil && current.bundleID == nil &&
-            !target.appName.isEmpty && target.appName == current.appName
+        // Current apps may now expose a bundle ID, so this remains a valid
+        // legacy match when the name is unchanged.
+        return !target.appName.isEmpty && target.appName == current.appName
     }
 
     private func compatibleRole(_ target: WindowAssignmentSnapshot, _ current: WindowAssignmentSnapshot) -> Bool {
