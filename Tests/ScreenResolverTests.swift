@@ -16,12 +16,16 @@ struct ScreenResolverTests {
 
     static func main() {
         testScreenIDSelectsPhysicalDisplayBeforeFrameConversion()
+        testSameGeometryPreservesExactPoints()
+        testScaleChangeUsesNormalizedFallback()
         testResolutionChangeUsesSelectedDisplayForRelativeFrame()
+        testVisibleFrameClampKeepsTitleBarAndSize()
+        testPresentationStateIsNotShrunk()
         testMissingScreenIDUsesSavedAbsoluteFrameCenter()
         testDuplicateScreenIDFallsBackWithoutGuessingIdentity()
         testNegativeArrangementAndLegacyIndexFallback()
         testEmptyDisplaySetReturnsNil()
-        print("ScreenResolverTests: 6 tests passed")
+        print("ScreenResolverTests: 10 tests passed")
     }
 
     private static func testScreenIDSelectsPhysicalDisplayBeforeFrameConversion() {
@@ -47,6 +51,40 @@ struct ScreenResolverTests {
         )
         let result = ScreenResolver().resolve(window: window, displays: [resized])
         assertEqual(result?.frame, CGRect(x: 940, y: 320, width: 1280, height: 360), "resolution-independent relative frame")
+    }
+
+    private static func testSameGeometryPreservesExactPoints() {
+        let frame = CGRect(x: 137, y: 211, width: 777, height: 533)
+        let displayFrame = CGRect(x: -1200, y: -300, width: 1920, height: 1080)
+        let visible = CGRect(x: -1200, y: -270, width: 1920, height: 1040)
+        let window = WindowSnapshot(frame: frame, relativeFrame: CGRect(x: 0, y: 0, width: 1, height: 1), screenID: "left", screenIndex: 0, savedDisplayFrame: displayFrame, savedVisibleFrame: visible)
+        let result = ScreenResolver().resolve(window: window, displays: [DisplaySnapshot(screenID: "left", frame: displayFrame, visibleFrame: visible, index: 0)])
+        assertEqual(result?.frame, frame, "same geometry exact point frame")
+    }
+
+    private static func testScaleChangeUsesNormalizedFallback() {
+        let frame = CGRect(x: 100, y: 100, width: 800, height: 600)
+        let displayFrame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let display = DisplaySnapshot(screenID: "primary", frame: displayFrame, visibleFrame: displayFrame, scale: 2, index: 0)
+        let window = WindowSnapshot(frame: frame, relativeFrame: CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5), screenID: "primary", screenIndex: 0, savedDisplayFrame: displayFrame, savedVisibleFrame: displayFrame, savedScale: 1)
+        let result = ScreenResolver().resolve(window: window, displays: [display])
+        assertEqual(result?.frame, CGRect(x: 480, y: 270, width: 960, height: 540), "scale normalized fallback")
+    }
+
+    private static func testVisibleFrameClampKeepsTitleBarAndSize() {
+        let visible = CGRect(x: 0, y: 22, width: 1200, height: 778)
+        let display = DisplaySnapshot(screenID: "primary", frame: CGRect(x: 0, y: 0, width: 1200, height: 800), visibleFrame: visible, index: 0)
+        let window = WindowSnapshot(frame: CGRect(x: -800, y: -500, width: 1400, height: 900), screenID: "primary", screenIndex: 0)
+        let result = ScreenResolver().resolve(window: window, displays: [display])
+        assertEqual(result?.frame, CGRect(x: -800, y: 22, width: 1400, height: 900), "visible frame clamp")
+    }
+
+    private static func testPresentationStateIsNotShrunk() {
+        let display = DisplaySnapshot(screenID: "primary", frame: CGRect(x: 0, y: 0, width: 1200, height: 800), visibleFrame: CGRect(x: 0, y: 22, width: 1200, height: 778), index: 0)
+        let frame = CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let window = WindowSnapshot(frame: frame, relativeFrame: CGRect(x: 0, y: 0, width: 1, height: 1), screenID: "primary", screenIndex: 0, preservePresentation: true)
+        let result = ScreenResolver().resolve(window: window, displays: [display])
+        assertEqual(result?.frame, frame, "presentation frame preserved")
     }
 
     private static func testMissingScreenIDUsesSavedAbsoluteFrameCenter() {
@@ -75,7 +113,7 @@ struct ScreenResolverTests {
         let result = ScreenResolver().resolve(window: window, displays: noIDs)
         assertEqual(result?.display, noIDs[1], "legacy screen index")
         assertEqual(result?.selection, .legacyScreenIndex, "legacy index strategy")
-        assertEqual(result?.frame, window.frame, "absolute fallback frame")
+        assertEqual(result?.frame, CGRect(x: 1896, y: 1056, width: 100, height: 100), "absolute fallback frame")
     }
 
     private static func testEmptyDisplaySetReturnsNil() {

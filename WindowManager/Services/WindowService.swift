@@ -222,7 +222,11 @@ class WindowService: ObservableObject {
             screenID: getScreenID(for: targetScreen),
             bundleIdentifier: bundleIdentifier,
             axRole: roleRef as? String,
-            axSubrole: subroleRef as? String
+            axSubrole: subroleRef as? String,
+            savedDisplayFrame: targetScreen.frame,
+            savedVisibleFrame: targetScreen.visibleFrame,
+            preservePresentation: screenFrame == targetScreen.frame || screenFrame == targetScreen.visibleFrame,
+            savedScale: targetScreen.backingScaleFactor
         )
     }
     
@@ -334,13 +338,17 @@ class WindowService: ObservableObject {
     /// permanent vendor/model/serial hardware identity.
     private func resolveTargetFrame(for windowInfo: WindowInfo, screens: [NSScreen]) -> CGRect {
         let displays = screens.enumerated().map { index, screen in
-            DisplaySnapshot(screenID: getScreenID(for: screen), frame: screen.frame, index: index)
+            DisplaySnapshot(screenID: getScreenID(for: screen), frame: screen.frame, visibleFrame: screen.visibleFrame, scale: screen.backingScaleFactor, index: index)
         }
         let snapshot = WindowSnapshot(
             frame: windowInfo.frame,
             relativeFrame: windowInfo.relativeFrame,
             screenID: windowInfo.screenID,
-            screenIndex: windowInfo.screenIndex
+            screenIndex: windowInfo.screenIndex,
+            savedDisplayFrame: windowInfo.savedDisplayFrame,
+            savedVisibleFrame: windowInfo.savedVisibleFrame,
+            preservePresentation: windowInfo.preservePresentation ?? false,
+            savedScale: windowInfo.savedScale
         )
         guard let resolved = ScreenResolver().resolve(window: snapshot, displays: displays) else {
             print("[WindowRestore] Window '\(windowInfo.appName)' has no available display; using saved frame")
