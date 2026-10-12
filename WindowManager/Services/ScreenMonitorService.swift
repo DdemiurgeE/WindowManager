@@ -31,6 +31,8 @@ class ScreenMonitorService: ObservableObject {
     private var retryID: UUID?
     private var restoreRetryCount = 0
     private let maxRestoreRetries = 3
+    private var pendingNotificationLayoutName: String?
+    private var pendingNotificationStatuses: [UUID: WindowRestoreResult.WindowRestoreStatus] = [:]
     private var restoreLog: [RestoreEvent] = []
     private let maxRestoreLogEntries = 20
     
@@ -101,8 +103,7 @@ class ScreenMonitorService: ObservableObject {
     
     private func scheduleAutoApplyAfterScreenStabilizes() {
         // Проверяем, включен ли auto-apply
-        let autoApplyEnabled = UserDefaults.standard.object(forKey: "autoApplyEnabled") as? Bool ?? true
-        guard autoApplyEnabled else {
+        guard isAutoApplyEnabled else {
             print("[ScreenMonitor] Auto-apply is disabled, skipping")
             return
         }
@@ -152,6 +153,13 @@ class ScreenMonitorService: ObservableObject {
         guard let layoutStorage, let windowService else {
             print("[ScreenMonitor] Auto-apply services disappeared, skipping")
             self.pendingRestoreWorkItem = nil
+            return
+        }
+
+        guard isAutoApplyEnabled else {
+            pendingRestoreID = nil
+            pendingRestoreWorkItem = nil
+            print("[ScreenMonitor] Auto-apply disabled during stability wait; skipping")
             return
         }
 
@@ -237,10 +245,13 @@ class ScreenMonitorService: ObservableObject {
                 let status = restoreResult.windowsResults[index].status
                 return (status == .appNotFound || status == .windowSkipped) ? window.id : nil
             })
-            scheduleRetryIfNeeded(layout: layoutToApply, missingIDs: missingIDs, windowService: windowService)
-            
-            // Отправляем уведомление пользователю
-            showNotification(layoutName: layoutToApply.name, summary: restoreResult.summaryDescription)
+            pendingNotificationLayoutName = layoutToApply.name
+            pendingNotificationStatuses = Dictionary(uniqueKeysWithValues: restoreResult.windowsResults.map { ($0.id, $0.status) })
+            if missingIDs.isEmpty {
+                finishRestoreNotification(layout: layoutToApply)
+            } else {
+                scheduleRetryIfNeeded(layout: layoutToApply, missingIDs: missingIDs, windowService: windowService)
+            }
         } else {
             print("[ScreenMonitor] No matching layout found for current screen configuration")
             appendRestoreEvent(RestoreEvent(
@@ -257,14 +268,34 @@ class ScreenMonitorService: ObservableObject {
     }
 
     private func scheduleRetryIfNeeded(layout: Layout, missingIDs: Set<UUID>, windowService: WindowService) {
-        guard !missingIDs.isEmpty, restoreRetryCount < maxRestoreRetries else { return }
+        guard isAutoApplyEnabled else {
+            finishRestoreNotification(layout: layout)
+            return
+        }
+        guard !missingIDs.isEmpty else {
+            finishRestoreNotification(layout: layout)
+            return
+        }
+        guard restoreRetryCount < maxRestoreRetries else {
+            finishRestoreNotification(layout: layout)
+            return
+        }
         restoreRetryCount += 1
         let id = UUID()
         retryID = id
         retryWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self, weak windowService] in
             guard let self, self.retryID == id, let windowService else { return }
+            guard self.isAutoApplyEnabled else {
+                self.finishRestoreNotification(layout: layout)
+                return
+            }
             let result = windowService.restoreLayout(layout, windowIDs: missingIDs)
+            for (index, window) in layout.windows.enumerated() where missingIDs.contains(window.id) {
+                if index < result.windowsResults.count {
+                    self.pendingNotificationStatuses[window.id] = result.windowsResults[index].status
+                }
+            }
             let orderedMissing = layout.windows.filter { missingIDs.contains($0.id) }
             let stillMissing = Set(orderedMissing.enumerated().compactMap { index, window in
                 guard index < result.windowsResults.count else { return window.id }
@@ -278,13 +309,15 @@ class ScreenMonitorService: ObservableObject {
     }
 
     private func cancelPendingRestore(reason: String) {
-        guard let pendingRestoreWorkItem else { return }
-        pendingRestoreWorkItem.cancel()
+        pendingRestoreWorkItem?.cancel()
         self.pendingRestoreID = nil
         self.pendingRestoreWorkItem = nil
         retryWorkItem?.cancel()
         retryWorkItem = nil
         retryID = nil
+        restoreRetryCount = 0
+        pendingNotificationLayoutName = nil
+        pendingNotificationStatuses.removeAll()
         print("[ScreenMonitor] Cancelled pending restore: \(reason)")
         appendRestoreEvent(RestoreEvent(
             layoutName: "",
@@ -294,6 +327,21 @@ class ScreenMonitorService: ObservableObject {
         ))
     }
     
+    private var isAutoApplyEnabled: Bool {
+        UserDefaults.standard.object(forKey: "autoApplyEnabled") as? Bool ?? true
+    }
+
+    private func finishRestoreNotification(layout: Layout) {
+        guard let layoutName = pendingNotificationLayoutName, layoutName == layout.name else { return }
+        let restored = pendingNotificationStatuses.values.filter { $0 == .positionSet }.count
+        let summary = "\(restored)/\(layout.windows.count) windows restored"
+        pendingNotificationLayoutName = nil
+        pendingNotificationStatuses.removeAll()
+        retryWorkItem = nil
+        retryID = nil
+        showNotification(layoutName: layout.name, summary: summary)
+    }
+
     private func showNotification(layoutName: String, summary: String) {
         let center = UNUserNotificationCenter.current()
 
