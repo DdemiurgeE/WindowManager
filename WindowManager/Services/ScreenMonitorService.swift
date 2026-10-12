@@ -26,6 +26,11 @@ class ScreenMonitorService: ObservableObject {
     private var windowService: WindowService?
     private var pendingRestoreWorkItem: DispatchWorkItem?
     private var pendingRestoreID: UUID?
+    private var isConfigured = false
+    private var retryWorkItem: DispatchWorkItem?
+    private var retryID: UUID?
+    private var restoreRetryCount = 0
+    private let maxRestoreRetries = 3
     private var restoreLog: [RestoreEvent] = []
     private let maxRestoreLogEntries = 20
     
@@ -37,6 +42,7 @@ class ScreenMonitorService: ObservableObject {
     func setup(layoutStorage: LayoutStorageService, windowService: WindowService) {
         self.layoutStorageService = layoutStorage
         self.windowService = windowService
+        isConfigured = true
     }
     
     private func setupScreenMonitoring() {
@@ -72,8 +78,14 @@ class ScreenMonitorService: ObservableObject {
     
     func getCurrentScreenConfiguration() -> ScreenConfiguration {
         let screens = NSScreen.screens
-        let screenIDs = screens.map { getScreenID(for: $0) }
-        return ScreenConfiguration(screenIDs: screenIDs)
+        return ScreenConfiguration(screens: screens.map { screen in
+            ScreenConfiguration.Screen(
+                id: getScreenID(for: screen),
+                frame: screen.frame,
+                visibleFrame: screen.visibleFrame,
+                scale: screen.backingScaleFactor
+            )
+        })
     }
     
     private func getScreenID(for screen: NSScreen) -> String {
@@ -95,7 +107,8 @@ class ScreenMonitorService: ObservableObject {
             return
         }
         
-        guard let layoutStorage = layoutStorageService,
+        guard isConfigured,
+              let layoutStorage = layoutStorageService,
               let windowService = windowService else {
             print("[ScreenMonitor] Auto-apply services are not ready, skipping")
             return
@@ -158,11 +171,11 @@ class ScreenMonitorService: ObservableObject {
         }
 
         if elapsed >= screenStabilityMaxWait {
-            print("[ScreenMonitor] Screen stability wait timed out; applying latest observed configuration")
-            currentScreenConfiguration = latestConfiguration
+            // A timeout is not evidence of a stable topology. Applying here can
+            // move windows onto a display whose frame is still changing.
+            print("[ScreenMonitor] Screen stability wait timed out; auto-apply skipped")
             self.pendingRestoreID = nil
             self.pendingRestoreWorkItem = nil
-            applyLayout(for: latestConfiguration, layoutStorage: layoutStorage, windowService: windowService)
             return
         }
 
@@ -185,7 +198,7 @@ class ScreenMonitorService: ObservableObject {
         // Ищем последний использованный layout для текущей конфигурации
         let matchingLayouts = layoutStorage.layouts.filter { layout in
             guard let layoutConfig = layout.screenConfiguration else { return false }
-            return layoutConfig == currentConfig
+            return configurationsMatch(layoutConfig, currentConfig)
         }
         
         // Сортируем по дате последнего использования
@@ -206,6 +219,9 @@ class ScreenMonitorService: ObservableObject {
                 windowsTotal: layoutToApply.windows.count
             ))
             print("[ScreenMonitor] Restore started")
+            restoreRetryCount = 0
+            retryWorkItem?.cancel()
+            retryWorkItem = nil
             let restoreResult = windowService.restoreLayout(layoutToApply)
             layoutStorage.markLayoutAsUsed(layoutToApply)
             print("[ScreenMonitor] Restore finished: \(restoreResult.summaryDescription)")
@@ -216,6 +232,12 @@ class ScreenMonitorService: ObservableObject {
                 windowsTotal: layoutToApply.windows.count,
                 windowsRestored: restoreResult.windowsRestored
             ))
+            let missingIDs = Set(layoutToApply.windows.enumerated().compactMap { index, window in
+                guard index < restoreResult.windowsResults.count else { return window.id }
+                let status = restoreResult.windowsResults[index].status
+                return (status == .appNotFound || status == .windowSkipped) ? window.id : nil
+            })
+            scheduleRetryIfNeeded(layout: layoutToApply, missingIDs: missingIDs, windowService: windowService)
             
             // Отправляем уведомление пользователю
             showNotification(layoutName: layoutToApply.name, summary: restoreResult.summaryDescription)
@@ -230,11 +252,39 @@ class ScreenMonitorService: ObservableObject {
         }
     }
 
+    private func configurationsMatch(_ saved: ScreenConfiguration, _ current: ScreenConfiguration) -> Bool {
+        saved.screenIDs == current.screenIDs && (saved.screens.isEmpty || current.screens.isEmpty || saved == current)
+    }
+
+    private func scheduleRetryIfNeeded(layout: Layout, missingIDs: Set<UUID>, windowService: WindowService) {
+        guard !missingIDs.isEmpty, restoreRetryCount < maxRestoreRetries else { return }
+        restoreRetryCount += 1
+        let id = UUID()
+        retryID = id
+        retryWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self, weak windowService] in
+            guard let self, self.retryID == id, let windowService else { return }
+            let result = windowService.restoreLayout(layout, windowIDs: missingIDs)
+            let orderedMissing = layout.windows.filter { missingIDs.contains($0.id) }
+            let stillMissing = Set(orderedMissing.enumerated().compactMap { index, window in
+                guard index < result.windowsResults.count else { return window.id }
+                let status = result.windowsResults[index].status
+                return (status == .appNotFound || status == .windowSkipped) ? window.id : nil
+            })
+            self.scheduleRetryIfNeeded(layout: layout, missingIDs: stillMissing, windowService: windowService)
+        }
+        retryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: workItem)
+    }
+
     private func cancelPendingRestore(reason: String) {
         guard let pendingRestoreWorkItem else { return }
         pendingRestoreWorkItem.cancel()
         self.pendingRestoreID = nil
         self.pendingRestoreWorkItem = nil
+        retryWorkItem?.cancel()
+        retryWorkItem = nil
+        retryID = nil
         print("[ScreenMonitor] Cancelled pending restore: \(reason)")
         appendRestoreEvent(RestoreEvent(
             layoutName: "",

@@ -12,6 +12,10 @@ class StatusBarService: NSObject, NSMenuDelegate {
     func setup(windowService: WindowService, layoutStorage: LayoutStorageService) {
         self.windowService = windowService
         self.layoutStorage = layoutStorage
+        guard statusItem == nil else {
+            updateMenu()
+            return
+        }
         
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         

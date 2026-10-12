@@ -248,8 +248,9 @@ class WindowService: ObservableObject {
     }
     
     @discardableResult
-    func restoreLayout(_ layout: Layout) -> RestoreResult {
+    func restoreLayout(_ layout: Layout, windowIDs: Set<UUID>? = nil) -> RestoreResult {
         var results: [WindowRestoreResult] = []
+        let targets = windowIDs.map { ids in layout.windows.filter { ids.contains($0.id) } } ?? layout.windows
 
         guard PermissionsService.shared.checkAccessibilityPermission() else {
             print("No accessibility permission")
@@ -258,7 +259,7 @@ class WindowService: ObservableObject {
         
         let screens = NSScreen.screens
         guard coordinateConverter != nil else {
-            let unavailable = layout.windows.map { WindowRestoreResult(appName: $0.appName, windowTitle: $0.windowTitle, status: .coordinateUnavailable) }
+            let unavailable = targets.map { WindowRestoreResult(appName: $0.appName, windowTitle: $0.windowTitle, status: .coordinateUnavailable) }
             return RestoreResult(layoutName: layout.name, windowsResults: unavailable)
         }
         let runningApps = NSWorkspace.shared.runningApplications
@@ -272,7 +273,7 @@ class WindowService: ObservableObject {
         var assignedElements: [UUID: AnyObject] = [:]
         var preparedApps = Set<pid_t>()
 
-        for windowInfo in layout.windows {
+        for windowInfo in targets {
             let targetFrame = resolveTargetFrame(for: windowInfo, screens: screens)
 
             let app = runningApps.first(where: { windowInfo.bundleIdentifier != nil && $0.bundleIdentifier == windowInfo.bundleIdentifier })
@@ -286,7 +287,7 @@ class WindowService: ObservableObject {
             let pid = app.processIdentifier
             if !preparedApps.contains(pid) {
                 preparedApps.insert(pid)
-                let appTargets = layout.windows.filter {
+                let appTargets = targets.filter {
                     ($0.bundleIdentifier != nil && $0.bundleIdentifier == app.bundleIdentifier) ||
                     ($0.bundleIdentifier == nil && $0.appName == app.localizedName)
                 }
