@@ -280,7 +280,7 @@ class WindowService: ObservableObject {
                 ?? runningApps.first(where: { $0.localizedName == windowInfo.appName })
             guard let app else {
                 print("  App not found: \(windowInfo.appName)")
-                results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .appNotFound))
+                results.append(WindowRestoreResult(id: windowInfo.id, appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .appNotFound))
                 continue
             }
             
@@ -320,11 +320,11 @@ class WindowService: ObservableObject {
                   case .matched = assignment,
                   let element = assignedElements[windowInfo.id],
                   case .success(let title) = axClient.title(of: element) else {
-                results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .windowSkipped))
+                results.append(WindowRestoreResult(id: windowInfo.id, appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .windowSkipped))
                 continue
             }
             let status = setWindowFrame(element, frame: targetFrame, debugName: "\(windowInfo.appName) — \(title)")
-            results.append(WindowRestoreResult(appName: windowInfo.appName, windowTitle: title, status: status))
+            results.append(WindowRestoreResult(id: windowInfo.id, appName: windowInfo.appName, windowTitle: title, status: status))
         }
 
         print("[RestoreResult] \(RestoreResult(layoutName: layout.name, windowsResults: results).summaryDescription)")

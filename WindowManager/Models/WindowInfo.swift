@@ -38,8 +38,8 @@ struct WindowInfo: Codable, Identifiable {
     let screenIndex: Int
     let timestamp: Date
 
-    init(appName: String, windowTitle: String, frame: CGRect, screenIndex: Int, relativeFrame: CGRect? = nil, screenID: String? = nil, bundleIdentifier: String? = nil, axRole: String? = nil, axSubrole: String? = nil, savedDisplayFrame: CGRect? = nil, savedVisibleFrame: CGRect? = nil, preservePresentation: Bool? = nil, savedScale: CGFloat? = nil) {
-        self.id = UUID()
+    init(id: UUID = UUID(), appName: String, windowTitle: String, frame: CGRect, screenIndex: Int, relativeFrame: CGRect? = nil, screenID: String? = nil, bundleIdentifier: String? = nil, axRole: String? = nil, axSubrole: String? = nil, savedDisplayFrame: CGRect? = nil, savedVisibleFrame: CGRect? = nil, preservePresentation: Bool? = nil, savedScale: CGFloat? = nil) {
+        self.id = id
         self.appName = appName
         self.bundleIdentifier = bundleIdentifier
         self.windowTitle = windowTitle

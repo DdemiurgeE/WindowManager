@@ -30,8 +30,8 @@ struct WindowRestoreResult: Codable, Identifiable {
         case restoreSuperseded
     }
 
-    init(appName: String, windowTitle: String, status: WindowRestoreStatus) {
-        self.id = UUID()
+    init(id: UUID = UUID(), appName: String, windowTitle: String, status: WindowRestoreStatus) {
+        self.id = id
         self.appName = appName
         self.windowTitle = windowTitle
         self.status = status
@@ -48,5 +48,22 @@ struct RestoreResult {
     }
     var summaryDescription: String {
         "\(windowsRestored)/\(windowsTotal) windows restored"
+    }
+}
+
+enum RestoreResultMapping {
+    static func statuses(for results: [WindowRestoreResult]) -> [UUID: WindowRestoreResult.WindowRestoreStatus] {
+        Dictionary(uniqueKeysWithValues: results.map { ($0.id, $0.status) })
+    }
+
+    static func retryableMissingIDs(
+        in windows: [WindowInfo],
+        results: [WindowRestoreResult]
+    ) -> Set<UUID> {
+        let statuses = statuses(for: results)
+        return Set(windows.compactMap { window in
+            guard let status = statuses[window.id] else { return window.id }
+            return status == .appNotFound || status == .windowSkipped ? window.id : nil
+        })
     }
 }

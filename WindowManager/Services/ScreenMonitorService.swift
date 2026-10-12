@@ -245,11 +245,10 @@ class ScreenMonitorService: ObservableObject {
                 windowsTotal: layoutToApply.windows.count,
                 windowsRestored: restoreResult.windowsRestored
             ))
-            let missingIDs = Set(layoutToApply.windows.enumerated().compactMap { index, window in
-                guard index < restoreResult.windowsResults.count else { return window.id }
-                let status = restoreResult.windowsResults[index].status
-                return (status == .appNotFound || status == .windowSkipped) ? window.id : nil
-            })
+            let missingIDs = RestoreResultMapping.retryableMissingIDs(
+                in: layoutToApply.windows,
+                results: restoreResult.windowsResults
+            )
             pendingNotificationLayoutName = layoutToApply.name
             pendingNotificationStatuses = Dictionary(uniqueKeysWithValues: restoreResult.windowsResults.map { ($0.id, $0.status) })
             if missingIDs.isEmpty {
@@ -300,17 +299,14 @@ class ScreenMonitorService: ObservableObject {
                 return
             }
             let result = windowService.restoreLayout(layout, windowIDs: missingIDs)
-            for (index, window) in layout.windows.enumerated() where missingIDs.contains(window.id) {
-                if index < result.windowsResults.count {
-                    self.pendingNotificationStatuses[window.id] = result.windowsResults[index].status
-                }
+            for windowResult in result.windowsResults where missingIDs.contains(windowResult.id) {
+                self.pendingNotificationStatuses[windowResult.id] = windowResult.status
             }
             let orderedMissing = layout.windows.filter { missingIDs.contains($0.id) }
-            let stillMissing = Set(orderedMissing.enumerated().compactMap { index, window in
-                guard index < result.windowsResults.count else { return window.id }
-                let status = result.windowsResults[index].status
-                return (status == .appNotFound || status == .windowSkipped) ? window.id : nil
-            })
+            let stillMissing = RestoreResultMapping.retryableMissingIDs(
+                in: orderedMissing,
+                results: result.windowsResults
+            )
             self.scheduleRetryIfNeeded(layout: layout, missingIDs: stillMissing, windowService: windowService)
         }
         retryWorkItem = workItem
