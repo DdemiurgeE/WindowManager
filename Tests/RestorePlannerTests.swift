@@ -30,6 +30,18 @@ struct RestorePlannerTests {
         let skipped = RestorePlanner().plan(layout: layout, current: ambiguous, displays: [display]).items[0]
         check(skipped.skipReason == .ambiguousCandidates, "ambiguous candidate is safely skipped")
         check(skipped.candidateID == nil && skipped.targetFrame == nil, "skipped item has no executable target")
+
+        let validID = saved.id
+        let unreadable = WindowInfo(appName: "Editor", windowTitle: "Other", frame: saved.frame,
+                                    screenIndex: 0, screenID: "screen-a", bundleIdentifier: "com.example.editor",
+                                    axRole: "AXWindow", savedDisplayFrame: display.frame, savedVisibleFrame: display.visibleFrame, savedScale: 2)
+        let unreadableID = unreadable.id
+        let mixedPlan = RestorePlanner().plan(layout: Layout(name: "Mixed", windows: [saved, unreadable]),
+                                              current: [current], displays: [display])
+        let scoped = RestorePlanAXFailureScope.idsToMark(plan: mixedPlan,
+                                                          targetIDs: [validID, unreadableID])
+        check(!scoped.contains(validID), "unreadable peer does not suppress valid planner match")
+        check(scoped.contains(unreadableID), "unreadable unmatched target is scoped for AX failure")
         print("RestorePlannerTests: all tests passed")
     }
 }

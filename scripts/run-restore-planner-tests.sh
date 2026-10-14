@@ -9,6 +9,7 @@ xcrun --sdk macosx swiftc \
   "$ROOT/WindowManager/Services/ScreenResolver.swift" \
   "$ROOT/WindowManager/Services/WindowAssignment.swift" \
   "$ROOT/WindowManager/Services/RestorePlanner.swift" \
+  "$ROOT/WindowManager/Services/RestorePlanAXFailureScope.swift" \
   "$ROOT/Tests/RestorePlannerTests.swift" \
   -o "$BUILD_DIR/RestorePlannerTests"
 "$BUILD_DIR/RestorePlannerTests"

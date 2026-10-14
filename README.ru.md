@@ -131,6 +131,7 @@ WindowManager/
 └── Views/
     ├── ContentView.swift           # Главное окно
     ├── LayoutListView.swift        # Список раскладок
+    ├── RestorePreviewView.swift    # Безопасный предпросмотр восстановления
     └── PermissionsView.swift       # Экран разрешений
 ```
 

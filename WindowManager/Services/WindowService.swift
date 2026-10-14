@@ -328,6 +328,7 @@ class WindowService: ObservableObject {
         var elements: [String: AnyObject] = [:]
         var missingApps = Set<UUID>()
         var axFailures = Set<UUID>()
+        var axFailureApps = Set<pid_t>()
         var processedPIDs = Set<pid_t>()
         for target in targets {
             let app: NSRunningApplication?
@@ -342,7 +343,7 @@ class WindowService: ObservableObject {
             }
             guard processedPIDs.insert(app.processIdentifier).inserted else { continue }
             guard case .success(let windows) = axClient.windows(for: app.processIdentifier) else {
-                axFailures.formUnion(targets.filter { $0.bundleIdentifier == app.bundleIdentifier || $0.appName == app.localizedName }.map(\.id))
+                axFailureApps.insert(app.processIdentifier)
                 continue
             }
             var targetReadFailed = false
@@ -358,10 +359,23 @@ class WindowService: ObservableObject {
                 elements[id] = element
             }
             if targetReadFailed {
-                axFailures.formUnion(targets.filter { $0.bundleIdentifier == app.bundleIdentifier || $0.appName == app.localizedName }.map(\.id))
+                axFailureApps.insert(app.processIdentifier)
             }
         }
         var plan = RestorePlanner().plan(layout: layout, targets: targets, current: snapshots, displays: displays)
+        // An unreadable window must not poison every target belonging to its app.
+        // Keep planner matches intact and only annotate unmatched targets for the
+        // app whose AX data could not be read.
+        if !axFailureApps.isEmpty {
+            let appTargets = targets.filter { target in
+                apps.contains { app in
+                    axFailureApps.contains(app.processIdentifier) &&
+                    (target.bundleIdentifier == app.bundleIdentifier || target.appName == app.localizedName)
+                }
+            }
+            axFailures.formUnion(RestorePlanAXFailureScope.idsToMark(
+                plan: plan, targetIDs: Set(appTargets.map(\.id))))
+        }
         if !missingApps.isEmpty || !axFailures.isEmpty {
             plan = WindowRestorePlan(layoutName: plan.layoutName, items: plan.items.map { item in
                 guard missingApps.contains(item.windowID) || axFailures.contains(item.windowID) else { return item }

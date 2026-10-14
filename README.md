@@ -131,6 +131,7 @@ WindowManager/
 └── Views/
     ├── ContentView.swift           # Main window
     ├── LayoutListView.swift        # Saved layouts list
+    ├── RestorePreviewView.swift    # Safe restore preview
     └── PermissionsView.swift       # Permissions screen
 ```
 
