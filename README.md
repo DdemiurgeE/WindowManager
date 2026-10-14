@@ -49,7 +49,7 @@ Add WindowManager to both lists and restart the app if macOS asks you to do so.
 - In the main window, click the restore button for the desired layout.
 - Or choose the layout name from the Menu Bar menu.
 
-For each saved target, the app first matches a running application by bundle identifier when both sides have one, then falls back to localized name. It reads the app's current Accessibility windows and assigns targets using title, role, subrole, and frame metadata. Dynamic titles or changing window sets can prevent a match.
+For each saved target, the app matches a running application by bundle identifier when the saved target has one; targets without a saved bundle identifier use localized-name fallback. A bundle-ID target therefore requires a current bundle-ID match. It reads the app's current Accessibility windows and assigns targets using title, role, subrole, and frame metadata. Dynamic titles or changing window sets can prevent a match.
 
 The display resolver prefers a unique usable observed display ID, then the saved frame's center, the saved display index, and finally a deterministic first display. An unchanged absolute frame is used only when saved and current display geometry, visible frame, and scale all match. Otherwise the finite normalized `relativeFrame` is projected onto the selected display; older layouts can fall back to their saved absolute frame. Normal frames are clamped so a useful title-bar strip remains reachable, without silently shrinking the saved window. Fullscreen/maximized-style presentations can opt out of this clamp.
 
@@ -67,7 +67,7 @@ When macOS reports a display-configuration change, Auto-apply waits for a stable
 - the most recently used matching layout is selected; unused layouts sort after used layouts;
 - missing applications/windows are retried at most three times, one second apart;
 - a topology change or disabling Auto-apply invalidates pending retries and prevents further writes;
-- the final notification is emitted at most once after the initial attempt and retries finish (or cancellation), subject to macOS notification authorization.
+- the final notification is emitted at most once after the initial attempt and any active retries finish (or an active retry is cancelled by disabling Auto-apply), subject to macOS notification authorization; topology cancellation discards pending notification state.
 
 Auto-apply is enabled by default (`autoApplyEnabled` in `UserDefaults`) and can be toggled in the main window or through **Auto-apply Layouts** in the Menu Bar.
 

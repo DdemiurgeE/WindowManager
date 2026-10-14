@@ -63,9 +63,9 @@ struct LayoutListView: View {
                 .listStyle(.inset)
             }
             if let result = windowService.lastRestoreResult,
-               layoutStorage.layouts.contains(where: { $0.name == result.layoutName }) {
+               layoutStorage.layouts.contains(where: { $0.id == result.layoutID }) {
                 RestoreDiagnosticsView(result: result, includeDetails: $includeDetailedDiagnostics,
-                    onRetry: { retryLayout(result.layoutName) })
+                    onRetry: { retryLayout(result.layoutID) })
                     .padding(.horizontal)
                     .padding(.bottom, 8)
             }
@@ -102,8 +102,8 @@ struct LayoutListView: View {
         layoutStorage.markLayoutAsUsed(layout)
     }
 
-    private func retryLayout(_ layoutName: String) {
-        guard let layout = layoutStorage.layouts.first(where: { $0.name == layoutName }) else { return }
+    private func retryLayout(_ layoutID: UUID?) {
+        guard let layoutID, let layout = layoutStorage.layouts.first(where: { $0.id == layoutID }) else { return }
         guard windowService.retryMissingOrFailed(layout) != nil else { return }
         layoutStorage.markLayoutAsUsed(layout)
     }

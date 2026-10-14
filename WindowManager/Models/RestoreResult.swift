@@ -39,8 +39,15 @@ struct WindowRestoreResult: Codable, Identifiable {
 }
 
 struct RestoreResult {
+    let layoutID: UUID?
     let layoutName: String
     let windowsResults: [WindowRestoreResult]
+
+    init(layoutID: UUID? = nil, layoutName: String, windowsResults: [WindowRestoreResult]) {
+        self.layoutID = layoutID
+        self.layoutName = layoutName
+        self.windowsResults = windowsResults
+    }
 
     var windowsTotal: Int { windowsResults.count }
     var windowsRestored: Int {
@@ -105,5 +112,14 @@ enum RestoreResultMapping {
             })
         }
         return lines.joined(separator: "\n")
+    }
+
+    static func merged(previous: RestoreResult, retry: RestoreResult) -> RestoreResult {
+        var latest = Dictionary(uniqueKeysWithValues: previous.windowsResults.map { ($0.id, $0) })
+        for item in retry.windowsResults { latest[item.id] = item }
+        let previousIDs = Set(previous.windowsResults.map(\.id))
+        let order = previous.windowsResults.map(\.id) + retry.windowsResults.map(\.id).filter { !previousIDs.contains($0) }
+        return RestoreResult(layoutID: retry.layoutID ?? previous.layoutID,
+            layoutName: retry.layoutName, windowsResults: order.compactMap { latest[$0] })
     }
 }

@@ -256,13 +256,19 @@ class WindowService: ObservableObject {
 
         guard PermissionsService.shared.checkAccessibilityPermission() else {
             print("No accessibility permission")
-            return record(RestoreResult(layoutName: layout.name, windowsResults: []))
+            return record(RestoreResult(layoutID: layout.id, layoutName: layout.name, windowsResults: []))
         }
         let (plan, elements) = makeRestorePlan(layout: layout, targets: targets)
         let results = plan.items.map { item -> WindowRestoreResult in
             guard let frame = item.targetFrame, let candidateID = item.candidateID,
                   let element = elements[candidateID] else {
-                let status: WindowRestoreResult.WindowRestoreStatus = item.skipReason == .appNotFound ? .appNotFound : .windowSkipped
+                let status: WindowRestoreResult.WindowRestoreStatus = {
+                    switch item.skipReason {
+                    case .appNotFound: return .appNotFound
+                    case .axFailure: return .axFailure
+                    default: return .windowSkipped
+                    }
+                }()
                 return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: item.windowTitle, status: status)
             }
             guard coordinateConverter != nil else {
@@ -272,12 +278,16 @@ class WindowService: ObservableObject {
             return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: title,
                 status: setWindowFrame(element, frame: frame, debugName: "\(item.appName) — \(title)"))
         }
-        return record(RestoreResult(layoutName: layout.name, windowsResults: results))
+        let result = RestoreResult(layoutID: layout.id, layoutName: layout.name, windowsResults: results)
+        if let previous = lastRestoreResult, previous.layoutID == layout.id, windowIDs != nil {
+            return record(RestoreResultMapping.merged(previous: previous, retry: result))
+        }
+        return record(result)
     }
 
     @discardableResult
     func retryMissingOrFailed(_ layout: Layout) -> RestoreResult? {
-        guard let previous = lastRestoreResult, previous.layoutName == layout.name else { return nil }
+        guard let previous = lastRestoreResult, previous.layoutID == layout.id else { return nil }
         let ids = RestoreResultMapping.retryableIDs(in: previous.windowsResults)
         guard !ids.isEmpty else { return nil }
         return restoreLayout(layout, windowIDs: ids)
@@ -317,19 +327,29 @@ class WindowService: ObservableObject {
         var snapshots: [WindowAssignmentSnapshot] = []
         var elements: [String: AnyObject] = [:]
         var missingApps = Set<UUID>()
+        var axFailures = Set<UUID>()
         var processedPIDs = Set<pid_t>()
         for target in targets {
-            guard let app = apps.first(where: { target.bundleIdentifier != nil && $0.bundleIdentifier == target.bundleIdentifier })
-                    ?? apps.first(where: { $0.localizedName == target.appName }) else {
+            let app: NSRunningApplication?
+            if let bundleIdentifier = target.bundleIdentifier {
+                app = apps.first(where: { $0.bundleIdentifier == bundleIdentifier })
+            } else {
+                app = apps.first(where: { $0.localizedName == target.appName })
+            }
+            guard let app else {
                 missingApps.insert(target.id)
                 continue
             }
             guard processedPIDs.insert(app.processIdentifier).inserted else { continue }
-            guard case .success(let windows) = axClient.windows(for: app.processIdentifier) else { continue }
+            guard case .success(let windows) = axClient.windows(for: app.processIdentifier) else {
+                axFailures.formUnion(targets.filter { $0.bundleIdentifier == app.bundleIdentifier || $0.appName == app.localizedName }.map(\.id))
+                continue
+            }
+            var targetReadFailed = false
             for (index, element) in windows.enumerated() {
                 guard case .success(let title) = axClient.title(of: element),
                       case .success(let position) = axClient.position(of: element),
-                      case .success(let size) = axClient.size(of: element) else { continue }
+                      case .success(let size) = axClient.size(of: element) else { targetReadFailed = true; continue }
                 let id = "\(app.processIdentifier):\(index)"
                 let frame = coordinateConverter?.axOriginToScreenFrame(axOrigin: position, size: size) ?? CGRect(origin: position, size: size)
                 snapshots.append(WindowAssignmentSnapshot(id: id, bundleID: app.bundleIdentifier,
@@ -337,14 +357,18 @@ class WindowService: ObservableObject {
                     subrole: axSubrole(element), frame: frame))
                 elements[id] = element
             }
+            if targetReadFailed {
+                axFailures.formUnion(targets.filter { $0.bundleIdentifier == app.bundleIdentifier || $0.appName == app.localizedName }.map(\.id))
+            }
         }
         var plan = RestorePlanner().plan(layout: layout, targets: targets, current: snapshots, displays: displays)
-        if !missingApps.isEmpty {
+        if !missingApps.isEmpty || !axFailures.isEmpty {
             plan = WindowRestorePlan(layoutName: plan.layoutName, items: plan.items.map { item in
-                guard missingApps.contains(item.windowID) else { return item }
+                guard missingApps.contains(item.windowID) || axFailures.contains(item.windowID) else { return item }
                 return WindowRestorePlanItem(windowID: item.windowID, appName: item.appName, windowTitle: item.windowTitle,
                     chosenDisplay: nil, targetFrame: nil, candidateID: nil, confidence: .none,
-                    reason: "application is not running", skipReason: .appNotFound)
+                    reason: axFailures.contains(item.windowID) ? "Accessibility data could not be read" : "application is not running",
+                    skipReason: axFailures.contains(item.windowID) ? .axFailure : .appNotFound)
             })
         }
         return (plan, elements)

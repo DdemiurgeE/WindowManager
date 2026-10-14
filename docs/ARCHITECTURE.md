@@ -83,7 +83,7 @@ AX/Quartz uses a top-left, downward-growing Y axis while `NSScreen` uses a botto
 For each target, the service:
 
 1. Resolves a display and target frame through `ScreenResolver`.
-2. Matches a running app by bundle identifier when both sides have one, then falls back to localized name.
+2. Matches a running app by saved bundle identifier; targets without one fall back to localized name. A saved bundle identifier is authoritative and must match the current bundle identifier.
 3. Reads the app's current AX windows once and assigns targets using title/role/subrole/frame metadata through `WindowAssigner`.
 4. Uses the assigned AX element to set the frame.
 5. Reports the final status from AX operations and read-back, not merely from a successful set request.

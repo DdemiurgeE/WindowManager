@@ -11,6 +11,7 @@ enum RestorePlanConfidence: String, Equatable {
 
 enum RestorePlanSkipReason: Equatable {
     case appNotFound
+    case axFailure
     case noIdentityMatch
     case noCompatibleWindow
     case ambiguousCandidates
