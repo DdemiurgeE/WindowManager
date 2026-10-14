@@ -423,3 +423,9 @@ class WindowService: ObservableObject {
         return "screen_\(Int(frame.width))x\(Int(frame.height))_\(Int(frame.origin.x))_\(Int(frame.origin.y))"
     }
 }
+
+extension WindowService: RestorePreviewPlanning {
+    func previewPlan(for layout: Layout) -> WindowRestorePlan {
+        dryRunRestore(layout)
+    }
+}

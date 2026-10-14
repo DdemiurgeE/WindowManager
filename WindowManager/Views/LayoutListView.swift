@@ -14,6 +14,7 @@ struct LayoutListView: View {
     @EnvironmentObject var permissionsService: PermissionsService
     
     @State private var selectedLayout: Layout?
+    @State private var previewLayout: Layout?
     @State private var showingDeleteConfirmation = false
     @State private var layoutToDelete: Layout?
     
@@ -36,13 +37,17 @@ struct LayoutListView: View {
             } else {
                 List {
                     ForEach(layoutStorage.layouts) { layout in
-                        LayoutRow(layout: layout)
+                        LayoutRow(layout: layout, onPreview: { previewLayout = layout })
                             .contentShape(Rectangle())
                             .contextMenu {
                                 Button(action: { restoreLayout(layout) }) {
                                     Label("Restore", systemImage: "arrow.clockwise")
                                 }
                                 .disabled(!permissionsService.hasAccessibilityPermission)
+
+                                Button(action: { previewLayout = layout }) {
+                                    Label("Preview / Dry Run", systemImage: "eye")
+                                }
                                 
                                 Button(role: .destructive, action: {
                                     layoutToDelete = layout
@@ -74,16 +79,29 @@ struct LayoutListView: View {
         } message: { layout in
             Text("Are you sure you want to delete '\(layout.name)'?")
         }
+        .sheet(item: $previewLayout) { layout in
+            RestorePreviewView(
+                layout: layout,
+                planner: windowService,
+                onApply: { applyLayout(layout) }
+            )
+        }
     }
     
     private func restoreLayout(_ layout: Layout) {
         windowService.restoreLayout(layout)
         layoutStorage.markLayoutAsUsed(layout)
     }
+
+    private func applyLayout(_ layout: Layout) {
+        restoreLayout(layout)
+        previewLayout = nil
+    }
 }
 
 struct LayoutRow: View {
     let layout: Layout
+    let onPreview: () -> Void
     @EnvironmentObject var windowService: WindowService
     @EnvironmentObject var permissionsService: PermissionsService
     @EnvironmentObject var layoutStorage: LayoutStorageService
@@ -111,6 +129,15 @@ struct LayoutRow: View {
             Spacer()
             
             Button(action: {
+                onPreview()
+            }) {
+                Label("Preview / Dry Run", systemImage: "eye.circle.fill")
+                    .font(.subheadline)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Preview layout \(layout.name) without applying")
+
+            Button(action: {
                 windowService.restoreLayout(layout)
                 layoutStorage.markLayoutAsUsed(layout)
             }) {
@@ -120,6 +147,7 @@ struct LayoutRow: View {
             }
             .buttonStyle(.borderless)
             .disabled(!permissionsService.hasAccessibilityPermission)
+            .accessibilityLabel("Apply layout \(layout.name)")
         }
         .padding(.vertical, 8)
     }
