@@ -7,6 +7,7 @@
 
 
 import SwiftUI
+import AppKit
 
 struct LayoutListView: View {
     @EnvironmentObject var layoutStorage: LayoutStorageService
@@ -17,6 +18,7 @@ struct LayoutListView: View {
     @State private var previewLayout: Layout?
     @State private var showingDeleteConfirmation = false
     @State private var layoutToDelete: Layout?
+    @AppStorage("includeDetailedRestoreDiagnostics") private var includeDetailedDiagnostics = false
     
     var body: some View {
         VStack {
@@ -60,6 +62,13 @@ struct LayoutListView: View {
                 }
                 .listStyle(.inset)
             }
+            if let result = windowService.lastRestoreResult,
+               layoutStorage.layouts.contains(where: { $0.name == result.layoutName }) {
+                RestoreDiagnosticsView(result: result, includeDetails: $includeDetailedDiagnostics,
+                    onRetry: { retryLayout(result.layoutName) })
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+            }
         }
         .navigationTitle("Saved Layouts")
         .toolbar {
@@ -93,9 +102,60 @@ struct LayoutListView: View {
         layoutStorage.markLayoutAsUsed(layout)
     }
 
+    private func retryLayout(_ layoutName: String) {
+        guard let layout = layoutStorage.layouts.first(where: { $0.name == layoutName }) else { return }
+        guard windowService.retryMissingOrFailed(layout) != nil else { return }
+        layoutStorage.markLayoutAsUsed(layout)
+    }
+
     private func applyLayout(_ layout: Layout) {
         restoreLayout(layout)
         previewLayout = nil
+    }
+}
+
+struct RestoreDiagnosticsView: View {
+    let result: RestoreResult
+    @Binding var includeDetails: Bool
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Last restore: \(result.layoutName)", systemImage: "checkmark.circle")
+                    .font(.headline)
+                Spacer()
+                Button("Copy diagnostics") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(
+                        RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: includeDetails),
+                        forType: .string)
+                }
+                .buttonStyle(.borderless)
+            }
+            Text("Verified restored: \(result.windowsRestored) • Missing/skipped: \(result.skippedCount) • AX failures: \(result.accessibilityFailureCount) • App clamps: \(result.clampCount)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Toggle("Include app and window names in copied details (explicit consent)", isOn: $includeDetails)
+                .font(.caption)
+            HStack {
+                Text(RestoreResult.lastUsedPolicyDescription)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Retry only missing / failed", action: onRetry)
+                    .disabled(RestoreResultMapping.retryableIDs(in: result.windowsResults).isEmpty)
+            }
+            if includeDetails {
+                ForEach(result.windowsResults) { item in
+                    Text("\(item.appName) — \(item.windowTitle): \(item.status.rawValue)")
+                        .font(.caption2)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
     }
 }
 
@@ -119,7 +179,7 @@ struct LayoutRow: View {
                 HStack {
                     Text("Created: \(layout.createdAt, style: .date)")
                     if let lastUsed = layout.lastUsed {
-                        Text("• Last used: \(lastUsed, style: .relative)")
+                        Text("• Last attempted: \(lastUsed, style: .relative)")
                     }
                 }
                 .font(.caption)

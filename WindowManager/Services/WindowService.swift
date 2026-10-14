@@ -90,6 +90,9 @@ struct SystemAXWindowClient: AXWindowClient {
 class WindowService: ObservableObject {
     @Published var currentWindows: [WindowInfo] = []
     @Published var isCapturing = false
+    @Published private(set) var lastRestoreResult: RestoreResult?
+    private(set) var restoreHistory: [RestoreResult] = []
+    private let maxRestoreHistoryEntries = 20
     private let axClient: AXWindowClient
 
     init(axClient: AXWindowClient = SystemAXWindowClient()) {
@@ -253,7 +256,7 @@ class WindowService: ObservableObject {
 
         guard PermissionsService.shared.checkAccessibilityPermission() else {
             print("No accessibility permission")
-            return RestoreResult(layoutName: layout.name, windowsResults: [])
+            return record(RestoreResult(layoutName: layout.name, windowsResults: []))
         }
         let (plan, elements) = makeRestorePlan(layout: layout, targets: targets)
         let results = plan.items.map { item -> WindowRestoreResult in
@@ -269,7 +272,24 @@ class WindowService: ObservableObject {
             return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: title,
                 status: setWindowFrame(element, frame: frame, debugName: "\(item.appName) — \(title)"))
         }
-        return RestoreResult(layoutName: layout.name, windowsResults: results)
+        return record(RestoreResult(layoutName: layout.name, windowsResults: results))
+    }
+
+    @discardableResult
+    func retryMissingOrFailed(_ layout: Layout) -> RestoreResult? {
+        guard let previous = lastRestoreResult, previous.layoutName == layout.name else { return nil }
+        let ids = RestoreResultMapping.retryableIDs(in: previous.windowsResults)
+        guard !ids.isEmpty else { return nil }
+        return restoreLayout(layout, windowIDs: ids)
+    }
+
+    private func record(_ result: RestoreResult) -> RestoreResult {
+        lastRestoreResult = result
+        restoreHistory.append(result)
+        if restoreHistory.count > maxRestoreHistoryEntries {
+            restoreHistory.removeFirst()
+        }
+        return result
     }
 
     /// Computes the exact decisions used by `restoreLayout` without calling an AX setter.
