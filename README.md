@@ -87,8 +87,8 @@ Current project settings:
 - Scheme: `WindowManager`
 - Bundle ID: `obelisk.WindowManager`
 - Swift: `5.0`
-- Marketing version: `2.6`
-- Build: `4`
+- Marketing version: `2.7`
+- Build: `5`
 - macOS deployment target: `26.2`
 
 ## Building from source
