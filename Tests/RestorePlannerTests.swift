@@ -42,6 +42,45 @@ struct RestorePlannerTests {
                                                           targetIDs: [validID, unreadableID])
         check(!scoped.contains(validID), "unreadable peer does not suppress valid planner match")
         check(scoped.contains(unreadableID), "unreadable unmatched target is scoped for AX failure")
+        testDuplicateTitlesThroughPlanner(display: display)
         print("RestorePlannerTests: all tests passed")
+    }
+
+    private static func testDuplicateTitlesThroughPlanner(display: DisplaySnapshot) {
+        // B06: two saved windows with the same identity/title must retain their
+        // own candidate and target frame, regardless of enumeration order.
+        let near = WindowInfo(appName: "Editor", windowTitle: "Same", frame: CGRect(x: 100, y: 100, width: 400, height: 300),
+                              screenIndex: 0, screenID: "screen-a", bundleIdentifier: "com.example.editor", axRole: "AXWindow",
+                              savedDisplayFrame: display.frame, savedVisibleFrame: display.visibleFrame, savedScale: 2)
+        let far = WindowInfo(appName: "Editor", windowTitle: "Same", frame: CGRect(x: 900, y: 100, width: 400, height: 300),
+                             screenIndex: 0, screenID: "screen-a", bundleIdentifier: "com.example.editor", axRole: "AXWindow",
+                             savedDisplayFrame: display.frame, savedVisibleFrame: display.visibleFrame, savedScale: 2)
+        let liveNear = WindowAssignmentSnapshot(id: "live-near", bundleID: "com.example.editor", appName: "Editor",
+                                                title: "Same", role: "AXWindow", frame: near.frame)
+        let liveFar = WindowAssignmentSnapshot(id: "live-far", bundleID: "com.example.editor", appName: "Editor",
+                                               title: "Same", role: "AXWindow", frame: far.frame)
+        let planner = RestorePlanner()
+        for targets in [[near, far], [far, near]] {
+            for candidates in [[liveNear, liveFar], [liveFar, liveNear]] {
+                let items = planner.plan(layout: Layout(name: "Duplicate titles", windows: targets),
+                                         current: candidates, displays: [display]).items
+                check(items.count == 2, "B06 retains both saved targets")
+                let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.windowID, $0) })
+                check(byID[near.id]?.candidateID == "live-near" && byID[near.id]?.targetFrame == near.frame
+                      && byID[near.id]?.skipReason == nil, "B06 near target maps to near candidate and frame")
+                check(byID[far.id]?.candidateID == "live-far" && byID[far.id]?.targetFrame == far.frame
+                      && byID[far.id]?.skipReason == nil, "B06 far target maps to far candidate and frame")
+            }
+        }
+
+        // Equal geometry removes the distinguishing evidence: neither saved
+        // target may acquire an executable candidate, including Apply Anyway.
+        let tied = WindowAssignmentSnapshot(id: "live-tied", bundleID: "com.example.editor", appName: "Editor",
+                                            title: "Same", role: "AXWindow", frame: near.frame)
+        let ambiguous = planner.plan(layout: Layout(name: "Duplicate titles", windows: [near, far]),
+                                     current: [tied, liveNear], displays: [display]).items
+        check(ambiguous.count == 2 && ambiguous.allSatisfy {
+            $0.skipReason == .ambiguousCandidates && $0.candidateID == nil && $0.targetFrame == nil
+        }, "B06 equal-ranking candidates have no executable target")
     }
 }
