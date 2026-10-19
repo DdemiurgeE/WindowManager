@@ -83,7 +83,7 @@ AX/Quartz uses a top-left, downward-growing Y axis while `NSScreen` uses a botto
 For each target, the service:
 
 1. Resolves a display and target frame through `ScreenResolver`.
-2. Matches a running app by bundle identifier when both sides have one, then falls back to localized name.
+2. Matches a running app by saved bundle identifier; targets without one fall back to localized name. A saved bundle identifier is authoritative and must match the current bundle identifier.
 3. Reads the app's current AX windows once and assigns targets using title/role/subrole/frame metadata through `WindowAssigner`.
 4. Uses the assigned AX element to set the frame.
 5. Reports the final status from AX operations and read-back, not merely from a successful set request.
@@ -124,11 +124,13 @@ When Auto-apply is enabled (the `UserDefaults` key is `autoApplyEnabled`, defaul
 4. It matches layouts by screen IDs and, when both configurations contain geometry, by complete `ScreenConfiguration` equality.
 5. It selects the most recently used matching layout (layouts with `lastUsed` sort ahead of never-used layouts).
 6. It records `started` and `completed`, `noMatch`, or `cancelled` events in an in-memory restore log capped at 20 entries.
-7. It marks the selected layout as used after the initial restore call.
+7. It records `lastUsed` as the time of the latest apply attempt; this field is not evidence that every window was restored successfully. The UI labels it “Last attempted”.
 
 Missing applications and windows are retried at most three times, one second apart. The retry set is computed by `WindowRestoreResult.id`; mixed or reordered result arrays cannot associate a status with the wrong window. A retry runs only for the current topology generation and only while Auto-apply remains enabled. A topology change or disabled toggle invalidates pending callbacks and prevents further writes.
 
 The final notification is deferred until the initial attempt and all bounded retries finish, or until retrying is cancelled by the Auto-apply toggle. It is emitted at most once per attempt and reports the number of windows whose final status is `positionSet`. Notification delivery still depends on macOS notification authorization.
+
+The UI keeps the last `RestoreResult` and an in-memory history capped at 20 results. It shows verified `positionSet` restores separately from skipped/missing windows, AX failures, and application clamps. “Retry only missing / failed” is an explicit bounded manual action keyed by each `WindowRestoreResult.id`; no retry is triggered by merely viewing diagnostics. Copied diagnostics omit app names and window titles by default and include them only after the user enables the detail-consent toggle.
 
 ## Manual and menu-bar flows
 

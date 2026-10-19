@@ -1,41 +1,35 @@
 # WindowManager
 
-WindowManager is a SwiftUI macOS application for saving and restoring window layouts across one or more displays. The app lives in the Menu Bar, can remember current window positions and sizes, lets you apply saved layouts manually, and can automatically restore a matching layout when the display configuration changes.
+WindowManager is a SwiftUI + AppKit macOS menu-bar application for saving and restoring window layouts across one or more displays. Use it when you want to reposition already-running applications after changing your display setup, either manually or through Auto-apply.
 
 > Russian version: [`README.ru.md`](README.ru.md)
 
 ## What the app does
 
-- Shows the current display configuration: number of displays, primary display, and resolutions.
-- Captures the list of open windows from regular macOS applications via the Accessibility API.
-- Stores the following for each window:
-  - application name;
-  - window title;
+- Shows the current display configuration, including display count, primary display, geometry, and scale.
+- Captures windows from running regular applications through the Accessibility API. Windows smaller than 50×50 points or outside the union of current displays are skipped.
+- Stores window metadata used for later restoration:
+  - application name and optional bundle identifier;
+  - title, Accessibility role, and subrole;
   - absolute `CGRect`;
-  - display index;
-  - normalized `relativeFrame` relative to the display;
+  - normalized `relativeFrame`;
+  - observed display ID, display geometry, visible frame, scale, and legacy display index;
   - capture timestamp.
-- Stores user layouts in `UserDefaults` under the `SavedLayouts` key.
-- Restores window positions and sizes via `AXUIElementSetAttributeValue`.
-- Provides a Menu Bar menu with quick actions:
-  - apply a saved layout;
-  - save the current layout;
-  - enable/disable Auto-apply;
-  - open the main window;
-  - quit the app.
-- Monitors display configuration changes and, when Auto-apply is enabled, applies the most recently used layout that matches the current configuration.
-- Shows a system notification after automatically applying a layout.
+- Stores user layouts as ISO-8601 JSON in local `UserDefaults` under the `SavedLayouts` key. There is no export, import, sync, or remote storage.
+- Restores window frames through `AXUIElementSetAttributeValue`, then reads position and size back to report the effective result.
+- Provides Menu Bar actions to apply a saved layout, save the current layout, toggle Auto-apply, open the main window, and quit.
+- Monitors display-configuration changes and can automatically apply the most recently used matching layout.
 
 ## Main usage scenarios
 
 ### 1. Initial permission setup
 
-The app needs macOS system permissions to work:
+The app needs macOS permissions to capture and restore windows:
 
 1. **Accessibility** — required to read and control window positions.
-2. **Screen Recording** — required to access window information.
+2. **Screen Recording** — checked heuristically through access to the on-screen window list.
 
-Open the app settings or macOS System Settings:
+Open:
 
 - `System Settings → Privacy & Security → Accessibility`
 - `System Settings → Privacy & Security → Screen Recording`
@@ -44,9 +38,9 @@ Add WindowManager to both lists and restart the app if macOS asks you to do so.
 
 ### 2. Saving a layout
 
-1. Arrange your windows the way you want.
+1. Arrange already-running windows.
 2. Click **Save Current Layout** in the main window or choose **Save Current Layout...** from the Menu Bar.
-3. Review the detected windows.
+3. Review the detected windows; small or off-display windows may be omitted.
 4. Enter a layout name.
 5. Click **Save Layout**.
 
@@ -55,16 +49,27 @@ Add WindowManager to both lists and restart the app if macOS asks you to do so.
 - In the main window, click the restore button for the desired layout.
 - Or choose the layout name from the Menu Bar menu.
 
-The app finds running applications by `localizedName`, then tries to match windows by title. If an application has only one window, that window is used even without an exact title match.
+For each saved target, the app matches a running application by bundle identifier when the saved target has one; targets without a saved bundle identifier use localized-name fallback. A bundle-ID target therefore requires a current bundle-ID match. It reads the app's current Accessibility windows and assigns targets using title, role, subrole, and frame metadata. Dynamic titles or changing window sets can prevent a match.
+
+The display resolver prefers a unique usable observed display ID, then the saved frame's center, the saved display index, and finally a deterministic first display. An unchanged absolute frame is used only when saved and current display geometry, visible frame, and scale all match. Otherwise the finite normalized `relativeFrame` is projected onto the selected display; older layouts can fall back to their saved absolute frame. Normal frames are clamped so a useful title-bar strip remains reachable, without silently shrinking the saved window. Fullscreen/maximized-style presentations can opt out of this clamp.
+
+Restore results are based on Accessibility writes and read-back. A window can be reported as `positionSet`, `appImposedClamp`, `axFailure`, `restoreSuperseded`, `coordinateUnavailable`, `appNotFound`, or `windowSkipped`, among other matching statuses. Only `positionSet` contributes to the restored-window count.
 
 ### 4. Automatic application
 
-When the display configuration changes, for example when a monitor is connected or disconnected, `ScreenMonitorService` looks for saved layouts with the same `ScreenConfiguration`. If Auto-apply is enabled, the most recently used matching layout is applied.
+When macOS reports a display-configuration change, Auto-apply waits for a stable topology before writing window frames:
 
-Auto-apply can be toggled:
+- the notification is debounced by 0.5 seconds;
+- display snapshots are polled every 0.25 seconds;
+- three consecutive equal snapshots are required, including geometry and scale;
+- if stability is not reached within 10 seconds, the attempt is skipped;
+- matching uses display IDs and, when geometry is available on both sides, complete `ScreenConfiguration` equality;
+- the most recently used matching layout is selected; unused layouts sort after used layouts;
+- missing applications/windows are retried at most three times, one second apart;
+- a topology change or disabling Auto-apply invalidates pending retries and prevents further writes;
+- the final notification is emitted at most once after the initial attempt and any active retries finish (or an active retry is cancelled by disabling Auto-apply), subject to macOS notification authorization; topology cancellation discards pending notification state.
 
-- in the main window via the **Auto-apply** switch;
-- in the Menu Bar via **Auto-apply Layouts**.
+Auto-apply is enabled by default (`autoApplyEnabled` in `UserDefaults`) and can be toggled in the main window or through **Auto-apply Layouts** in the Menu Bar.
 
 ## Requirements
 
@@ -78,7 +83,8 @@ Current project settings:
 - Scheme: `WindowManager`
 - Bundle ID: `obelisk.WindowManager`
 - Swift: `5.0`
-- Marketing version: `2.3`
+- Marketing version: `2.5`
+- Build: `3`
 - macOS deployment target: `26.2`
 
 ## Building from source
@@ -111,32 +117,40 @@ WindowManager/
 ├── Info.plist                      # App icon configuration
 ├── Models/
 │   ├── Layout.swift                # Layout and display configuration model
-│   └── WindowInfo.swift            # Saved window model
+│   ├── WindowInfo.swift            # Saved window model
+│   └── RestoreResult.swift         # Restore statuses and result counts
 ├── Services/
 │   ├── WindowService.swift         # Captures and restores windows via AX API
+│   ├── FrameRestoreEngine.swift    # AX write, timing, drift correction, read-back
+│   ├── ScreenResolver.swift        # Display selection and frame resolution
+│   ├── WindowAssignment.swift       # Current-window matching
 │   ├── LayoutStorageService.swift  # Persists layouts in UserDefaults
 │   ├── PermissionsService.swift    # Checks/requests macOS permissions
-│   ├── ScreenMonitorService.swift  # Display monitoring and Auto-apply
+│   ├── ScreenMonitorService.swift  # Stable-topology Auto-apply lifecycle
 │   └── StatusBarService.swift      # Menu Bar integration
 └── Views/
     ├── ContentView.swift           # Main window
     ├── LayoutListView.swift        # Saved layouts list
+    ├── RestorePreviewView.swift    # Safe restore preview
     └── PermissionsView.swift       # Permissions screen
 ```
 
 ## Documentation
 
-Detailed architecture, model, service, and limitation documentation is available in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Detailed architecture, model, service, restore-status, and limitation documentation is available in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 Russian documentation is available in [`docs/ARCHITECTURE.ru.md`](docs/ARCHITECTURE.ru.md).
 
 ## Known limitations
 
-- Applications must already be running: WindowManager does not launch missing applications when restoring a layout.
-- Window matching depends on the application name and window title. Dynamic titles can reduce restore accuracy.
-- Some applications may restrict changing their window size or position via the Accessibility API.
-- The app may need to be restarted after macOS permission changes.
-- Saved layouts are stored locally in `UserDefaults`; there is no sync or export mechanism yet.
+- Applications must already be running; WindowManager does not launch missing applications.
+- Bundle IDs, localized names, titles, roles, subroles, and frames improve matching but do not guarantee it. Dynamic titles and changing application window sets can prevent assignment.
+- Some applications reject Accessibility changes, clamp frames, or change them after read-back; the result reports that outcome instead of claiming success.
+- Display IDs are observation keys and can change after reconnect. Normalized coordinates adapt to geometry but do not prove that two IDs refer to the same physical monitor; vendor/model/serial fingerprints are not stored.
+- Older layouts remain decodable, but layouts without newer display metadata rely on resolver fallbacks and cannot claim exact display identity.
+- Accessibility is required for capture and restore. Screen Recording status is checked heuristically through window-list access.
+- Saved layouts are local `UserDefaults` JSON only; there is no sync or export mechanism.
+- The automated verification does not mutate live windows or displays. The WindowManager scheme has no test action, so `xcodebuild test` is not available for this target.
 
 ## Repository
 

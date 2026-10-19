@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.configuration }}
+        run: |
+          xcodebuild \
+            -project WindowManager.xcodeproj \
+            -scheme WindowManager \
+            -configuration "${{ matrix.configuration }}" \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Check shell scripts
+        run: bash -n scripts/*.sh
+
+      - name: Run standalone harnesses
+        run: |
+          set -euo pipefail
+          scripts/run-auto-apply-tests.sh
+          scripts/run-coordinate-tests.sh
+          scripts/run-fake-ax-tests.sh
+          scripts/run-restore-planner-tests.sh
+          scripts/run-restore-preview-tests.sh
+          scripts/run-restore-result-mapping-tests.sh
+          scripts/run-screen-resolver-tests.sh
+          scripts/run-window-assignment-tests.sh
+          scripts/run-legacy-json-fixture-test.sh

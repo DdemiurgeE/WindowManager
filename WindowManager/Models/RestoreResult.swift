@@ -39,8 +39,15 @@ struct WindowRestoreResult: Codable, Identifiable {
 }
 
 struct RestoreResult {
+    let layoutID: UUID?
     let layoutName: String
     let windowsResults: [WindowRestoreResult]
+
+    init(layoutID: UUID? = nil, layoutName: String, windowsResults: [WindowRestoreResult]) {
+        self.layoutID = layoutID
+        self.layoutName = layoutName
+        self.windowsResults = windowsResults
+    }
 
     var windowsTotal: Int { windowsResults.count }
     var windowsRestored: Int {
@@ -49,6 +56,21 @@ struct RestoreResult {
     var summaryDescription: String {
         "\(windowsRestored)/\(windowsTotal) windows restored"
     }
+
+    var skippedCount: Int {
+        windowsResults.filter { $0.status == .appNotFound || $0.status == .windowSkipped }.count
+    }
+
+    var accessibilityFailureCount: Int {
+        windowsResults.filter { $0.status == .axFailure }.count
+    }
+
+    var clampCount: Int {
+        windowsResults.filter { $0.status == .appImposedClamp }.count
+    }
+
+    /// `lastUsed` records that an apply was attempted, never that it succeeded.
+    static let lastUsedPolicyDescription = "Last attempted (not proof of a successful restore)"
 }
 
 enum RestoreResultMapping {
@@ -65,5 +87,39 @@ enum RestoreResultMapping {
             guard let status = statuses[window.id] else { return window.id }
             return status == .appNotFound || status == .windowSkipped ? window.id : nil
         })
+    }
+
+    static func retryableIDs(in results: [WindowRestoreResult]) -> Set<UUID> {
+        Set(results.compactMap { result in
+            switch result.status {
+            case .appNotFound, .windowSkipped, .axFailure: return result.id
+            default: return nil
+            }
+        })
+    }
+
+    static func redactedDiagnostics(for result: RestoreResult, includeWindowDetails: Bool) -> String {
+        var lines = [
+            "Layout: \(result.layoutName)",
+            "Restored: \(result.windowsRestored)/\(result.windowsTotal)",
+            "Skipped or missing: \(result.skippedCount)",
+            "Accessibility failures: \(result.accessibilityFailureCount)",
+            "Application clamps: \(result.clampCount)"
+        ]
+        if includeWindowDetails {
+            lines.append(contentsOf: result.windowsResults.map {
+                "\($0.appName) — \($0.windowTitle): \($0.status.rawValue)"
+            })
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func merged(previous: RestoreResult, retry: RestoreResult) -> RestoreResult {
+        var latest = Dictionary(uniqueKeysWithValues: previous.windowsResults.map { ($0.id, $0) })
+        for item in retry.windowsResults { latest[item.id] = item }
+        let previousIDs = Set(previous.windowsResults.map(\.id))
+        let order = previous.windowsResults.map(\.id) + retry.windowsResults.map(\.id).filter { !previousIDs.contains($0) }
+        return RestoreResult(layoutID: retry.layoutID ?? previous.layoutID,
+            layoutName: retry.layoutName, windowsResults: order.compactMap { latest[$0] })
     }
 }

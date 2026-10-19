@@ -90,6 +90,9 @@ struct SystemAXWindowClient: AXWindowClient {
 class WindowService: ObservableObject {
     @Published var currentWindows: [WindowInfo] = []
     @Published var isCapturing = false
+    @Published private(set) var lastRestoreResult: RestoreResult?
+    private(set) var restoreHistory: [RestoreResult] = []
+    private let maxRestoreHistoryEntries = 20
     private let axClient: AXWindowClient
 
     init(axClient: AXWindowClient = SystemAXWindowClient()) {
@@ -249,86 +252,140 @@ class WindowService: ObservableObject {
     
     @discardableResult
     func restoreLayout(_ layout: Layout, windowIDs: Set<UUID>? = nil) -> RestoreResult {
-        var results: [WindowRestoreResult] = []
         let targets = windowIDs.map { ids in layout.windows.filter { ids.contains($0.id) } } ?? layout.windows
 
         guard PermissionsService.shared.checkAccessibilityPermission() else {
             print("No accessibility permission")
-            return RestoreResult(layoutName: layout.name, windowsResults: results)
+            return record(RestoreResult(layoutID: layout.id, layoutName: layout.name, windowsResults: []))
         }
-        
+        let (plan, elements) = makeRestorePlan(layout: layout, targets: targets)
+        let results = plan.items.map { item -> WindowRestoreResult in
+            guard let frame = item.targetFrame, let candidateID = item.candidateID,
+                  let element = elements[candidateID] else {
+                let status: WindowRestoreResult.WindowRestoreStatus = {
+                    switch item.skipReason {
+                    case .appNotFound: return .appNotFound
+                    case .axFailure: return .axFailure
+                    default: return .windowSkipped
+                    }
+                }()
+                return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: item.windowTitle, status: status)
+            }
+            guard coordinateConverter != nil else {
+                return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: item.windowTitle, status: .coordinateUnavailable)
+            }
+            let title = (try? axTitle(element)) ?? item.windowTitle
+            return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: title,
+                status: setWindowFrame(element, frame: frame, debugName: "\(item.appName) — \(title)"))
+        }
+        let result = RestoreResult(layoutID: layout.id, layoutName: layout.name, windowsResults: results)
+        if let previous = lastRestoreResult, previous.layoutID == layout.id, windowIDs != nil {
+            return record(RestoreResultMapping.merged(previous: previous, retry: result))
+        }
+        return record(result)
+    }
+
+    @discardableResult
+    func retryMissingOrFailed(_ layout: Layout) -> RestoreResult? {
+        guard let previous = lastRestoreResult, previous.layoutID == layout.id else { return nil }
+        let ids = RestoreResultMapping.retryableIDs(in: previous.windowsResults)
+        guard !ids.isEmpty else { return nil }
+        return restoreLayout(layout, windowIDs: ids)
+    }
+
+    private func record(_ result: RestoreResult) -> RestoreResult {
+        lastRestoreResult = result
+        restoreHistory.append(result)
+        if restoreHistory.count > maxRestoreHistoryEntries {
+            restoreHistory.removeFirst()
+        }
+        return result
+    }
+
+    /// Computes the exact decisions used by `restoreLayout` without calling an AX setter.
+    func planRestore(_ layout: Layout, windowIDs: Set<UUID>? = nil) -> WindowRestorePlan {
+        let targets = windowIDs.map { ids in layout.windows.filter { ids.contains($0.id) } } ?? layout.windows
+        return makeRestorePlan(layout: layout, targets: targets).plan
+    }
+
+    func dryRunRestore(_ layout: Layout, windowIDs: Set<UUID>? = nil) -> WindowRestorePlan {
+        planRestore(layout, windowIDs: windowIDs)
+    }
+
+    private func axTitle(_ element: AnyObject) throws -> String {
+        guard case .success(let title) = axClient.title(of: element) else { throw NSError(domain: "WindowManager", code: 1) }
+        return title
+    }
+
+    private func makeRestorePlan(layout: Layout, targets: [WindowInfo]) -> (plan: WindowRestorePlan, elements: [String: AnyObject]) {
         let screens = NSScreen.screens
-        guard coordinateConverter != nil else {
-            let unavailable = targets.map { WindowRestoreResult(appName: $0.appName, windowTitle: $0.windowTitle, status: .coordinateUnavailable) }
-            return RestoreResult(layoutName: layout.name, windowsResults: unavailable)
+        let displays = screens.enumerated().map { index, screen in
+            DisplaySnapshot(screenID: getScreenID(for: screen), frame: screen.frame,
+                visibleFrame: screen.visibleFrame, scale: screen.backingScaleFactor, index: index)
         }
-        let runningApps = NSWorkspace.shared.runningApplications
-        
-        print("=== Restoring layout: \(layout.name) ===")
-        for (index, screen) in screens.enumerated() {
-            print("Screen \(index): frame=\(screen.frame)")
-        }
-        
-        var assignmentStatuses: [UUID: WindowAssignmentStatus] = [:]
-        var assignedElements: [UUID: AnyObject] = [:]
-        var preparedApps = Set<pid_t>()
-
-        for windowInfo in targets {
-            let targetFrame = resolveTargetFrame(for: windowInfo, screens: screens)
-
-            let app = runningApps.first(where: { windowInfo.bundleIdentifier != nil && $0.bundleIdentifier == windowInfo.bundleIdentifier })
-                ?? runningApps.first(where: { $0.localizedName == windowInfo.appName })
+        let apps = NSWorkspace.shared.runningApplications
+        var snapshots: [WindowAssignmentSnapshot] = []
+        var elements: [String: AnyObject] = [:]
+        var missingApps = Set<UUID>()
+        var axFailures = Set<UUID>()
+        var axFailureApps = Set<pid_t>()
+        var processedPIDs = Set<pid_t>()
+        for target in targets {
+            let app: NSRunningApplication?
+            if let bundleIdentifier = target.bundleIdentifier {
+                app = apps.first(where: { $0.bundleIdentifier == bundleIdentifier })
+            } else {
+                app = apps.first(where: { $0.localizedName == target.appName })
+            }
             guard let app else {
-                print("  App not found: \(windowInfo.appName)")
-                results.append(WindowRestoreResult(id: windowInfo.id, appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .appNotFound))
+                missingApps.insert(target.id)
                 continue
             }
-            
-            let pid = app.processIdentifier
-            if !preparedApps.contains(pid) {
-                preparedApps.insert(pid)
-                let appTargets = targets.filter {
-                    ($0.bundleIdentifier != nil && $0.bundleIdentifier == app.bundleIdentifier) ||
-                    ($0.bundleIdentifier == nil && $0.appName == app.localizedName)
-                }
-                if case .success(let windowArray) = axClient.windows(for: pid) {
-                    let snapshots = windowArray.enumerated().compactMap { index, element -> WindowAssignmentSnapshot? in
-                        guard case .success(let title) = axClient.title(of: element),
-                              case .success(let position) = axClient.position(of: element),
-                              case .success(let size) = axClient.size(of: element) else { return nil }
-                        let frame = coordinateConverter?.axOriginToScreenFrame(axOrigin: position, size: size) ?? CGRect(origin: position, size: size)
-                        return WindowAssignmentSnapshot(id: "\(pid):\(index)", bundleID: app.bundleIdentifier,
-                                              appName: app.localizedName ?? "Unknown", title: title,
-                                              role: axRole(element), subrole: axSubrole(element), frame: frame)
-                    }
-                    let assignments = WindowAssigner().assign(targets: appTargets.map {
-                        WindowAssignmentSnapshot(id: $0.id.uuidString, bundleID: $0.bundleIdentifier, appName: $0.appName,
-                                       title: $0.windowTitle == "Untitled" ? "" : $0.windowTitle,
-                                       role: $0.axRole, subrole: $0.axSubrole, frame: $0.frame)
-                    }, current: snapshots)
-                    for assignment in assignments {
-                        assignmentStatuses[UUID(uuidString: assignment.targetID)!] = assignment.status
-                        if case .matched(let currentID) = assignment.status,
-                           let index = Int(currentID.split(separator: ":").last ?? ""), index < windowArray.count {
-                            assignedElements[UUID(uuidString: assignment.targetID)!] = windowArray[index]
-                        }
-                    }
-                }
-            }
-
-            guard let assignment = assignmentStatuses[windowInfo.id],
-                  case .matched = assignment,
-                  let element = assignedElements[windowInfo.id],
-                  case .success(let title) = axClient.title(of: element) else {
-                results.append(WindowRestoreResult(id: windowInfo.id, appName: windowInfo.appName, windowTitle: windowInfo.windowTitle, status: .windowSkipped))
+            guard processedPIDs.insert(app.processIdentifier).inserted else { continue }
+            guard case .success(let windows) = axClient.windows(for: app.processIdentifier) else {
+                axFailureApps.insert(app.processIdentifier)
                 continue
             }
-            let status = setWindowFrame(element, frame: targetFrame, debugName: "\(windowInfo.appName) — \(title)")
-            results.append(WindowRestoreResult(id: windowInfo.id, appName: windowInfo.appName, windowTitle: title, status: status))
+            var targetReadFailed = false
+            for (index, element) in windows.enumerated() {
+                guard case .success(let title) = axClient.title(of: element),
+                      case .success(let position) = axClient.position(of: element),
+                      case .success(let size) = axClient.size(of: element) else { targetReadFailed = true; continue }
+                let id = "\(app.processIdentifier):\(index)"
+                let frame = coordinateConverter?.axOriginToScreenFrame(axOrigin: position, size: size) ?? CGRect(origin: position, size: size)
+                snapshots.append(WindowAssignmentSnapshot(id: id, bundleID: app.bundleIdentifier,
+                    appName: app.localizedName ?? "Unknown", title: title, role: axRole(element),
+                    subrole: axSubrole(element), frame: frame))
+                elements[id] = element
+            }
+            if targetReadFailed {
+                axFailureApps.insert(app.processIdentifier)
+            }
         }
-
-        print("[RestoreResult] \(RestoreResult(layoutName: layout.name, windowsResults: results).summaryDescription)")
-        return RestoreResult(layoutName: layout.name, windowsResults: results)
+        var plan = RestorePlanner().plan(layout: layout, targets: targets, current: snapshots, displays: displays)
+        // An unreadable window must not poison every target belonging to its app.
+        // Keep planner matches intact and only annotate unmatched targets for the
+        // app whose AX data could not be read.
+        if !axFailureApps.isEmpty {
+            let appTargets = targets.filter { target in
+                apps.contains { app in
+                    axFailureApps.contains(app.processIdentifier) &&
+                    (target.bundleIdentifier == app.bundleIdentifier || target.appName == app.localizedName)
+                }
+            }
+            axFailures.formUnion(RestorePlanAXFailureScope.idsToMark(
+                plan: plan, targetIDs: Set(appTargets.map(\.id))))
+        }
+        if !missingApps.isEmpty || !axFailures.isEmpty {
+            plan = WindowRestorePlan(layoutName: plan.layoutName, items: plan.items.map { item in
+                guard missingApps.contains(item.windowID) || axFailures.contains(item.windowID) else { return item }
+                return WindowRestorePlanItem(windowID: item.windowID, appName: item.appName, windowTitle: item.windowTitle,
+                    chosenDisplay: nil, targetFrame: nil, candidateID: nil, confidence: .none,
+                    reason: axFailures.contains(item.windowID) ? "Accessibility data could not be read" : "application is not running",
+                    skipReason: axFailures.contains(item.windowID) ? .axFailure : .appNotFound)
+            })
+        }
+        return (plan, elements)
     }
 
     /// Вычисляет абсолютный targetFrame для окна при восстановлении.
@@ -422,5 +479,11 @@ class WindowService: ObservableObject {
         
         let frame = screen.frame
         return "screen_\(Int(frame.width))x\(Int(frame.height))_\(Int(frame.origin.x))_\(Int(frame.origin.y))"
+    }
+}
+
+extension WindowService: RestorePreviewPlanning {
+    func previewPlan(for layout: Layout) -> WindowRestorePlan {
+        dryRunRestore(layout)
     }
 }

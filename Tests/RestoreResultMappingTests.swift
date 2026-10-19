@@ -35,6 +35,14 @@ struct RestoreResultMappingTests {
         let result = RestoreResult(layoutName: "test", windowsResults: initial)
         require(result.windowsRestored == 2, "only verified positionSet results count as restored")
         require(result.summaryDescription == "2/5 windows restored", "summary does not optimistically count failures")
-        print("RestoreResultMappingTests: 4 checks passed")
+        require(result.skippedCount == 2 && result.accessibilityFailureCount == 1, "diagnostic counts distinguish missing and AX failures")
+        let privateResult = RestoreResult(layoutName: "test", windowsResults: [
+            WindowRestoreResult(id: ids[0], appName: "PrivateApp", windowTitle: "PrivateTitle", status: .windowSkipped)
+        ])
+        let redacted = RestoreResultMapping.redactedDiagnostics(for: privateResult, includeWindowDetails: false)
+        require(!redacted.contains("PrivateApp") && !redacted.contains("PrivateTitle"), "default diagnostics are redacted")
+        require(RestoreResultMapping.retryableIDs(in: initial) == Set([ids[1], ids[3], ids[4]]), "manual retry includes missing and failed IDs")
+        require(RestoreResult.lastUsedPolicyDescription.contains("not proof"), "lastUsed policy is explicit")
+        print("RestoreResultMappingTests: 8 checks passed")
     }
 }
