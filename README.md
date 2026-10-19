@@ -15,7 +15,7 @@ WindowManager is a SwiftUI + AppKit macOS menu-bar application for saving and re
   - normalized `relativeFrame`;
   - observed display ID, display geometry, visible frame, scale, and legacy display index;
   - capture timestamp.
-- Stores user layouts as ISO-8601 JSON in local `UserDefaults` under the `SavedLayouts` key. There is no export, import, sync, or remote storage.
+- Stores user layouts as ISO-8601 JSON in local `UserDefaults` under the `SavedLayouts` key. An explicit local backup export is available; there is no import, sync, or remote storage.
 - Restores window frames through `AXUIElementSetAttributeValue`, then reads position and size back to report the effective result.
 - Provides Menu Bar actions to apply a saved layout, save the current layout, toggle Auto-apply, open the main window, and quit.
 - Monitors display-configuration changes and can automatically apply the most recently used matching layout.
@@ -55,6 +55,10 @@ The display resolver prefers a unique usable observed display ID, then the saved
 
 Restore results are based on Accessibility writes and read-back. A window can be reported as `positionSet`, `appImposedClamp`, `axFailure`, `restoreSuperseded`, `coordinateUnavailable`, `appNotFound`, or `windowSkipped`, among other matching statuses. Only `positionSet` contributes to the restored-window count.
 
+### Exporting a backup
+
+In **Saved Layouts**, select **Export Backup…**, read the privacy warning, and choose a local destination. The JSON file contains **all** saved layouts, including window titles, app names, geometry, display metadata, IDs, and ISO-8601 dates. Treat it as private; WindowManager does not upload it. An empty list exports as `[]`. Cancel leaves the destination untouched; a failed export reports an error without changing saved layouts. This is a portable legacy `[Layout]` JSON snapshot, not an import or restore action. Keep a separate copy of any backup you overwrite.
+
 ### 4. Automatic application
 
 When macOS reports a display-configuration change, Auto-apply waits for a stable topology before writing window frames:
@@ -83,8 +87,8 @@ Current project settings:
 - Scheme: `WindowManager`
 - Bundle ID: `obelisk.WindowManager`
 - Swift: `5.0`
-- Marketing version: `2.6`
-- Build: `4`
+- Marketing version: `2.7`
+- Build: `5`
 - macOS deployment target: `26.2`
 
 ## Building from source
@@ -149,7 +153,7 @@ Russian documentation is available in [`docs/ARCHITECTURE.ru.md`](docs/ARCHITECT
 - Display IDs are observation keys and can change after reconnect. Normalized coordinates adapt to geometry but do not prove that two IDs refer to the same physical monitor; vendor/model/serial fingerprints are not stored.
 - Older layouts remain decodable, but layouts without newer display metadata rely on resolver fallbacks and cannot claim exact display identity.
 - Accessibility is required for capture and restore. Screen Recording status is checked heuristically through window-list access.
-- Saved layouts are local `UserDefaults` JSON only; there is no sync or export mechanism.
+- Backup export is manual and local only; there is no import or sync mechanism.
 - The automated verification does not mutate live windows or displays. The WindowManager scheme has no test action, so `xcodebuild test` is not available for this target.
 
 ## Repository

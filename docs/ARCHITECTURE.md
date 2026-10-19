@@ -23,7 +23,7 @@ On startup, `WindowManagerApp` creates and injects `WindowService`, `Permissions
 
 ## Persisted data model
 
-`Layout` contains an id, user-visible name, captured `windows`, creation date, optional `lastUsed` date, and optional `screenConfiguration`. `LayoutStorageService` encodes the layouts as ISO-8601 JSON in `UserDefaults` under `SavedLayouts`; there is no export/import format or remote storage.
+`Layout` contains an id, user-visible name, captured `windows`, creation date, optional `lastUsed` date, and optional `screenConfiguration`. `LayoutStorageService` encodes the layouts as ISO-8601 JSON in `UserDefaults` under `SavedLayouts`. Explicit local backup export reuses that `[Layout]` encoding with an atomic file write after the user chooses a destination; it neither changes `SavedLayouts` nor imports, syncs, or uploads data.
 
 ### WindowInfo
 
@@ -138,7 +138,7 @@ The UI keeps the last `RestoreResult` and an in-memory history capped at 20 resu
 
 ## Backward compatibility and limitations
 
-- Layouts are local `UserDefaults` JSON only; no export/import or synchronization exists.
+- Layouts remain local `UserDefaults` JSON; only explicit local backup export is supported, not import or synchronization.
 - Missing optional `WindowInfo` and `ScreenConfiguration` metadata is supported for older layouts. Such layouts may use frame-center, index, or absolute-frame fallbacks and cannot claim exact display identity.
 - The app does not launch missing applications.
 - Dynamic titles and changing application window sets can prevent assignment; bundle IDs and AX role metadata improve matching but do not guarantee it.
@@ -164,7 +164,7 @@ xcodebuild \
 
 ## Possible future improvements
 
-- Explicit export/import of layouts.
+- Import of exported layouts (not available yet).
 - More robust matching for dynamic window titles.
 - Launching missing applications.
 - User-configurable exclusions and keyboard shortcuts.
