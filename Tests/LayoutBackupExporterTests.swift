@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 @main
 struct LayoutBackupExporterTests {
@@ -6,8 +7,18 @@ struct LayoutBackupExporterTests {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory.appendingPathComponent("layout-export-\(UUID().uuidString)", isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Deliberately traversable: privacy must not depend on parent permissions.
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
         defer { try? fileManager.removeItem(at: directory) }
         let destination = directory.appendingPathComponent("backup.json")
+        func assertPrivateBackup() throws {
+            let attributes = try fileManager.attributesOfItem(atPath: destination.path)
+            precondition((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        }
+        func assertNoTemporaryFiles() throws {
+            let names = try fileManager.contentsOfDirectory(atPath: directory.path)
+            precondition(names.allSatisfy { !$0.hasPrefix(".layout-backup-") })
+        }
 
         let screen = ScreenConfiguration.Screen(
             id: "synthetic-screen", frame: CGRect(x: -800, y: 0, width: 800, height: 600),
@@ -28,6 +39,8 @@ struct LayoutBackupExporterTests {
         decoder.dateDecodingStrategy = .iso8601
 
         try LayoutBackupExporter.export(originals, to: destination)
+        try assertPrivateBackup()
+        try assertNoTemporaryFiles()
         let data = try Data(contentsOf: destination)
         let decoded = try decoder.decode([Layout].self, from: data)
         precondition(decoded.count == 2 && decoded[0].id == layout.id)
@@ -56,20 +69,59 @@ struct LayoutBackupExporterTests {
         } catch {
             let existing = try Data(contentsOf: destination)
             precondition(existing == data)
+            try assertPrivateBackup()
+            try assertNoTemporaryFiles()
         }
-        // A write error leaves the existing backup intact.
+        // A partial write fails without exposing the temporary payload, changing
+        // the old backup, or leaving private staging files behind.
+        var writes = 0
+        do {
+            try LayoutBackupExporter.export(originals, to: destination, writeChunk: { fd, bytes, length in
+                writes += 1
+                let staged = try! fileManager.contentsOfDirectory(atPath: directory.path)
+                    .filter { $0.hasPrefix(".layout-backup-") }
+                precondition(staged.count == 1)
+                let path = directory.appendingPathComponent(staged[0]).path
+                let mode = try! fileManager.attributesOfItem(atPath: path)[.posixPermissions] as! NSNumber
+                precondition(mode.intValue == 0o600)
+                if writes == 1 { return Darwin.write(fd, bytes, min(length, 5)) }
+                errno = EIO
+                return -1
+            })
+            preconditionFailure("Simulated partial write must fail")
+        } catch {
+            precondition(writes == 2)
+            let existing = try Data(contentsOf: destination)
+            precondition(existing == data)
+            try assertPrivateBackup()
+            try assertNoTemporaryFiles()
+        }
+        // A destination error after staging also leaves the existing backup intact.
         do {
             try LayoutBackupExporter.export(originals, to: directory)
             preconditionFailure("Writing over a directory must fail")
         } catch {
             let existing = try Data(contentsOf: destination)
             precondition(existing == data)
+            try assertNoTemporaryFiles()
+        }
+        let link = directory.appendingPathComponent("link.json")
+        try fileManager.createSymbolicLink(at: link, withDestinationURL: destination)
+        do {
+            try LayoutBackupExporter.export([], to: link)
+            preconditionFailure("Writing over a symlink must fail")
+        } catch {
+            let existing = try Data(contentsOf: destination)
+            precondition(existing == data)
+            try assertNoTemporaryFiles()
         }
         // No layouts is a valid legacy [Layout] payload.
         try LayoutBackupExporter.export([], to: destination)
+        try assertPrivateBackup()
+        try assertNoTemporaryFiles()
         let emptyData = try Data(contentsOf: destination)
         let emptyLayouts = try decoder.decode([Layout].self, from: emptyData)
         precondition(emptyLayouts.isEmpty)
-        print("LayoutBackupExporterTests: synthetic legacy roundtrip, failure safety, empty backup passed")
+        print("LayoutBackupExporterTests: legacy roundtrip, private new/replaced backup, partial/encode/destination failure safety, empty backup passed")
     }
 }
