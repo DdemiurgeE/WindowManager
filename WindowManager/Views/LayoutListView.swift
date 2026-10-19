@@ -8,6 +8,7 @@
 
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct LayoutListView: View {
     @EnvironmentObject var layoutStorage: LayoutStorageService
@@ -18,6 +19,9 @@ struct LayoutListView: View {
     @State private var previewLayout: Layout?
     @State private var showingDeleteConfirmation = false
     @State private var layoutToDelete: Layout?
+    @State private var showingExportWarning = false
+    @State private var showingExportResult = false
+    @State private var exportResult = ""
     @AppStorage("includeDetailedRestoreDiagnostics") private var includeDetailedDiagnostics = false
     
     var body: some View {
@@ -73,10 +77,28 @@ struct LayoutListView: View {
         .navigationTitle("Saved Layouts")
         .toolbar {
             ToolbarItem(placement: .automatic) {
+                Button("Export Backup…", systemImage: "square.and.arrow.up") {
+                    showingExportWarning = true
+                }
+                .accessibilityLabel("Export backup of all saved layouts")
+                .help("Save all layouts as a local JSON backup")
+            }
+            ToolbarItem(placement: .automatic) {
                 Text("\(layoutStorage.layouts.count) layouts")
                     .foregroundColor(.secondary)
                     .font(.caption)
             }
+        }
+        .confirmationDialog("Export all saved layouts?", isPresented: $showingExportWarning) {
+            Button("Choose Backup Destination…") { exportBackup() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The JSON backup contains window titles, app names, window geometry, and display metadata. Keep it private. Nothing is uploaded; you choose where to save it.")
+        }
+        .alert("Backup Export", isPresented: $showingExportResult) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportResult)
         }
         .alert("Delete Layout", isPresented: $showingDeleteConfirmation, presenting: layoutToDelete) { layout in
             Button("Delete", role: .destructive) {
@@ -100,6 +122,24 @@ struct LayoutListView: View {
     private func restoreLayout(_ layout: Layout) {
         windowService.restoreLayout(layout)
         layoutStorage.markLayoutAsUsed(layout)
+    }
+
+    private func exportBackup() {
+        let panel = NSSavePanel()
+        panel.title = "Export Saved Layouts Backup"
+        panel.nameFieldStringValue = "WindowManager-Layouts.json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try LayoutBackupExporter.export(layoutStorage.layouts, to: url)
+            exportResult = "Backup exported to the chosen location. Keep this file private."
+        } catch {
+            // Do not expose encoding errors, file paths, or private layout content.
+            exportResult = "Backup could not be exported. No layout data was changed. Check the destination and try again."
+        }
+        showingExportResult = true
     }
 
     private func retryLayout(_ layoutID: UUID?) {

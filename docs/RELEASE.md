@@ -1,5 +1,17 @@
 # WindowManager release model
 
+## v2.7 candidate — export-only backup
+
+Saved Layouts gains a manual **Export Backup…** action. After a privacy warning,
+the user chooses a local JSON destination. It snapshots all saved layouts in the
+existing ISO-8601 `[Layout]` format without modifying SavedLayouts or applying
+windows. Window titles, app names, frames and display details are sensitive;
+the app does not upload backups. There is no import or migration in this release.
+Before publishing, bump `MARKETING_VERSION` from 2.6 to 2.7 and increment
+`CURRENT_PROJECT_VERSION` from 4 to 5 in the release preparation commit, then
+run signed release verification. This implementation leaves version metadata
+unchanged pending review and publication.
+
 ## Versioning
 
 The marketing version is stored in `MARKETING_VERSION`; the build number is
