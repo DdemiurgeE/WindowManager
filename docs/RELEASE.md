@@ -1,6 +1,6 @@
 # WindowManager release model
 
-## v2.8 — local import (implementation under independent QA/review)
+## v2.8 — local import (synthetic QA/review passed; live acceptance pending)
 
 Manual **Import Backup…** accepts v2.7 unversioned `[Layout]` and v2.8 versioned
 envelopes, validates before a non-writing preview, rejects whole-file collisions,

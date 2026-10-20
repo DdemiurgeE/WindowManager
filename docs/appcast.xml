@@ -5,6 +5,14 @@
         <link>https://ddemiurgee.github.io/WindowManager/appcast.xml</link>
         <description>WindowManager updates.</description>
         <item>
+            <title>Version 2.8</title>
+            <pubDate>Tue, 20 Oct 2026 11:27:54 +0000</pubDate>
+            <sparkle:version>6</sparkle:version>
+            <sparkle:shortVersionString>2.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.2</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/DdemiurgeE/WindowManager/releases/download/v2.8/WindowManager-2.8.zip" type="application/octet-stream" sparkle:edSignature="KWSllFVOW9VxaeWfR3Upc6hcVtsYY+Pv/uuBdDthIlDM6ORqrsgaEOz3pijXhrXabJYAaQiPdv1OoEb1VLS8DQ==" length="2269144" />
+        </item>
+        <item>
             <title>Version 2.7</title>
             <pubDate>Mon, 19 Oct 2026 15:02:40 +0000</pubDate>
             <sparkle:version>5</sparkle:version>
