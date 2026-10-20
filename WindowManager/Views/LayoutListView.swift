@@ -22,6 +22,10 @@ struct LayoutListView: View {
     @State private var showingExportWarning = false
     @State private var showingExportResult = false
     @State private var exportResult = ""
+    @State private var importPreview: LayoutStorageService.ImportPreview?
+    @State private var showingImportConfirmation = false
+    @State private var showingImportResult = false
+    @State private var importResult = ""
     @AppStorage("includeDetailedRestoreDiagnostics") private var includeDetailedDiagnostics = false
     
     var body: some View {
@@ -84,6 +88,10 @@ struct LayoutListView: View {
                 .help("Save all layouts as a local JSON backup")
             }
             ToolbarItem(placement: .automatic) {
+                Button("Import Backup…", systemImage: "square.and.arrow.down") { importBackup() }
+                    .accessibilityLabel("Choose a local JSON backup to preview for import")
+            }
+            ToolbarItem(placement: .automatic) {
                 Text("\(layoutStorage.layouts.count) layouts")
                     .foregroundColor(.secondary)
                     .font(.caption)
@@ -100,11 +108,21 @@ struct LayoutListView: View {
         } message: {
             Text(exportResult)
         }
+        .confirmationDialog("Import backup?", isPresented: $showingImportConfirmation) {
+            Button("Import \(importPreview?.layouts.count ?? 0) Layouts") { confirmImport() }
+            Button("Cancel", role: .cancel) { importPreview = nil }
+        } message: {
+            Text("Add \(importPreview?.layouts.count ?? 0) layouts: \(importPreview?.layouts.map(\.name).joined(separator: ", ") ?? ""). Existing layouts are never replaced. Imported layouts remain excluded from Auto-apply even if restored manually. Backup metadata remains private in the local store.")
+        }
+        .alert("Backup Import", isPresented: $showingImportResult) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(importResult) }
         .alert("Delete Layout", isPresented: $showingDeleteConfirmation, presenting: layoutToDelete) { layout in
             Button("Delete", role: .destructive) {
-                layoutStorage.deleteLayout(layout)
-                // Обновляем меню в статус-баре
-                StatusBarService.shared.updateMenu()
+                do {
+                    try layoutStorage.deleteLayout(layout)
+                    StatusBarService.shared.updateMenu()
+                } catch { reportStorageFailure() }
             }
             Button("Cancel", role: .cancel) {}
         } message: { layout in
@@ -121,7 +139,7 @@ struct LayoutListView: View {
     
     private func restoreLayout(_ layout: Layout) {
         windowService.restoreLayout(layout)
-        layoutStorage.markLayoutAsUsed(layout)
+        do { try layoutStorage.markLayoutAsUsed(layout) } catch { reportStorageFailure() }
     }
 
     private func exportBackup() {
@@ -133,7 +151,7 @@ struct LayoutListView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
-            try LayoutBackupExporter.export(layoutStorage.layouts, to: url)
+            try LayoutBackupExporter.export(layoutStorage.exportLayouts(), to: url)
             exportResult = "Backup exported to the chosen location. Keep this file private."
         } catch {
             // Do not expose encoding errors, file paths, or private layout content.
@@ -142,10 +160,59 @@ struct LayoutListView: View {
         showingExportResult = true
     }
 
+    private func importBackup() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Layout Backup"
+        panel.allowedContentTypes = [.json]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let bytes = try handle.read(upToCount: LayoutImportCodec.maxBytes + 1) ?? Data()
+            let preview = try layoutStorage.prepareImport(bytes)
+            guard !preview.layouts.isEmpty else {
+                importResult = "Backup is empty; no layouts were changed."
+                showingImportResult = true
+                return
+            }
+            importPreview = preview
+            showingImportConfirmation = true
+        } catch {
+            importResult = "Backup cannot be imported. Check its format, size, or duplicate IDs/names. No layouts were changed."
+            showingImportResult = true
+        }
+    }
+
+    private func confirmImport() {
+        guard let preview = importPreview else { return }
+        importPreview = nil
+        do {
+            try layoutStorage.confirmImport(preview)
+            StatusBarService.shared.updateMenu()
+            importResult = "Layouts imported. They will not Auto-apply."
+        } catch {
+            importResult = layoutStorage.storageAvailable
+                ? "Import was rejected or storage failed before commit. Inspect saved layouts before retrying."
+                : "Commit outcome needs recovery. Auto-apply and changes are disabled; restart to re-read the private store. Do not retry blindly."
+        }
+        showingImportResult = true
+    }
+
+    private func reportStorageFailure() {
+        importResult = layoutStorage.storageAvailable
+            ? "Layout could not be saved. Check storage and retry."
+            : "Private layout store needs recovery; changes and Auto-apply are disabled."
+        showingImportResult = true
+    }
+
     private func retryLayout(_ layoutID: UUID?) {
         guard let layoutID, let layout = layoutStorage.layouts.first(where: { $0.id == layoutID }) else { return }
         guard windowService.retryMissingOrFailed(layout) != nil else { return }
-        layoutStorage.markLayoutAsUsed(layout)
+        do { try layoutStorage.markLayoutAsUsed(layout) } catch { reportStorageFailure() }
     }
 
     private func applyLayout(_ layout: Layout) {
@@ -239,7 +306,7 @@ struct LayoutRow: View {
 
             Button(action: {
                 windowService.restoreLayout(layout)
-                layoutStorage.markLayoutAsUsed(layout)
+                try? layoutStorage.markLayoutAsUsed(layout)
             }) {
                 Label("Restore", systemImage: "arrow.clockwise.circle.fill")
                     .labelStyle(.iconOnly)

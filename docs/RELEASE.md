@@ -1,5 +1,19 @@
 # WindowManager release model
 
+## v2.8 — local import (implementation under independent QA/review)
+
+Manual **Import Backup…** accepts v2.7 unversioned `[Layout]` and v2.8 versioned
+envelopes, validates before a non-writing preview, rejects whole-file collisions,
+and requires explicit confirmation. A first confirmed import installs a private
+transactional Application Support store while retaining the original SavedLayouts
+blob untouched. Imported layouts keep their timestamps but cannot Auto-apply.
+New exports are versioned with UTC millisecond dates; v2.7 seconds-only dates
+cannot regain lost precision. The new authoritative file contains sensitive
+window metadata; older releases see only the preserved pre-import defaults
+snapshot after downgrade. No live import or window mutation is part of automated
+QA. Release metadata is `MARKETING_VERSION=2.8` and `CURRENT_PROJECT_VERSION=6`.
+Do not publish until independent synthetic QA and review of the exact commit pass.
+
 ## v2.7 — export-only backup
 
 Saved Layouts gains a manual **Export Backup…** action. After a privacy warning,

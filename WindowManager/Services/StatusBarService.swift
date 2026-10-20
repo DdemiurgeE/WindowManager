@@ -97,7 +97,7 @@ class StatusBarService: NSObject, NSMenuDelegate {
         
         print("StatusBarService: Applying layout '\(layout.name)'")
         windowService?.restoreLayout(layout)
-        layoutStorage?.markLayoutAsUsed(layout)
+        try? layoutStorage?.markLayoutAsUsed(layout)
     }
     
     @objc private func toggleAutoApply() {

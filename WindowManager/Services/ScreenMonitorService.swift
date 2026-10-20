@@ -210,6 +210,7 @@ class ScreenMonitorService: ObservableObject {
     private func applyLayout(for currentConfig: ScreenConfiguration, layoutStorage: LayoutStorageService, windowService: WindowService) {
         // Ищем последний использованный layout для текущей конфигурации
         let matchingLayouts = layoutStorage.layouts.filter { layout in
+            guard layoutStorage.eligibleForAutoApply(layout.id) else { return false }
             guard let layoutConfig = layout.screenConfiguration else { return false }
             return configurationsMatch(layoutConfig, currentConfig)
         }
@@ -224,6 +225,7 @@ class ScreenMonitorService: ObservableObject {
         
         // Применяем самый свежий layout
         if let layoutToApply = sortedLayouts.first {
+            guard layoutStorage.eligibleForAutoApply(layoutToApply.id) else { return }
             print("[ScreenMonitor] Auto-applying layout: \(layoutToApply.name)")
             appendRestoreEvent(RestoreEvent(
                 layoutName: layoutToApply.name,
@@ -236,7 +238,7 @@ class ScreenMonitorService: ObservableObject {
             retryWorkItem?.cancel()
             retryWorkItem = nil
             let restoreResult = windowService.restoreLayout(layoutToApply)
-            layoutStorage.markLayoutAsUsed(layoutToApply)
+            try? layoutStorage.markLayoutAsUsed(layoutToApply)
             print("[ScreenMonitor] Restore finished: \(restoreResult.summaryDescription)")
             appendRestoreEvent(RestoreEvent(
                 layoutName: layoutToApply.name,
@@ -296,6 +298,11 @@ class ScreenMonitorService: ObservableObject {
             guard self.isAutoApplyEnabled else {
                 self.autoApplyRetryPolicy.setAutoApplyEnabled(false)
                 self.finishRestoreNotification(layout: layout)
+                return
+            }
+            guard self.layoutStorageService?.eligibleForAutoApply(layout.id) == true else {
+                self.pendingNotificationLayoutName = nil
+                self.pendingNotificationStatuses.removeAll()
                 return
             }
             let result = windowService.restoreLayout(layout, windowIDs: missingIDs)

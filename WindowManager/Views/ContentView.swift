@@ -30,6 +30,7 @@ struct ContentView: View {
     @State private var screenDetails: [ScreenDetailInfo] = []
     @State private var currentWindows: [WindowInfo] = []
     @State private var showingSaveSheet = false
+    @State private var showingStorageError = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -58,6 +59,11 @@ struct ContentView: View {
                     layoutName = ""
                 }
             )
+        }
+        .alert("Layout could not be saved", isPresented: $showingStorageError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The layout store changed or is unavailable. No new layout was published. Review saved layouts before trying again.")
         }
         .onAppear {
             updateScreenDetails()
@@ -298,7 +304,10 @@ struct ContentView: View {
     private func saveLayout(name: String) {
         let screenConfig = windowService.getCurrentScreenConfiguration()
         let layout = Layout(name: name, windows: currentWindows, screenConfiguration: screenConfig)
-        layoutStorage.saveLayout(layout)
+        do { try layoutStorage.saveLayout(layout) } catch {
+            showingStorageError = true
+            return
+        }
 
         // Обновляем меню в статус-баре
         StatusBarService.shared.updateMenu()
