@@ -127,18 +127,45 @@ final class TransactionalLayoutStore {
     }
 
     /// Resolve a post-rename uncertainty from canonical bytes, never a compensating write.
+    /// The caller must replace its published snapshot before enabling mutations again.
     func reconcile() throws -> Snapshot {
-        frozen = false
-        do { return try snapshot() } catch { frozen = true; throw error }
+        guard frozen else { return try snapshot() }
+        do {
+            let lock = lockURL.path.withCString { Darwin.open($0, O_RDWR | O_NOFOLLOW | O_CLOEXEC) }
+            guard lock >= 0 else { throw posixError() }
+            defer { _ = Darwin.lockf(lock, F_ULOCK, 0); _ = Darwin.close(lock) }
+            guard Darwin.lockf(lock, F_LOCK, 0) == 0 else { throw posixError() }
+            var lockInfo = stat()
+            guard fstat(lock, &lockInfo) == 0, lockInfo.st_uid == getuid(),
+                  lockInfo.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+                  lockInfo.st_nlink == 1, lockInfo.st_mode & 0o077 == 0 else { throw StoreError.unavailable }
+            let bytes = try readCanonical()
+            guard bytes != nil else { throw StoreError.invalid }
+            _ = try decode(bytes!)
+            try syncDirectory(directory)
+            frozen = false
+            return try snapshot()
+        } catch { frozen = true; throw error }
     }
 
     private func decode(_ bytes: Data) throws -> Payload {
         guard bytes.count <= LayoutImportCodec.maxBytes else { throw StoreError.invalid }
+        guard (try? LayoutImportCodec.checkJSONKeys(bytes)) != nil,
+              let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              Set(object.keys) == ["version", "layouts", "quarantinedImportedLayoutIDs"],
+              let rawLayouts = object["layouts"] as? [Any],
+              let quarantined = object["quarantinedImportedLayoutIDs"] as? [String],
+              quarantined.count <= LayoutImportCodec.maxLayouts,
+              quarantined.allSatisfy({ UUID(uuidString: $0) != nil }) else { throw StoreError.invalid }
+        // Validate the original nested JSON, not a Codable re-encoding that
+        // would silently discard unknown fields or invalid geometry.
+        guard let layoutBytes = try? JSONSerialization.data(withJSONObject: rawLayouts),
+              let validated = try? LayoutImportCodec.decode(layoutBytes) else { throw StoreError.invalid }
         let decoder = LayoutImportCodec.decoder()
         guard let result = try? decoder.decode(Payload.self, from: bytes), result.version == 1,
+              result.layouts.map(\.id) == validated.map(\.id),
               Set(result.quarantinedImportedLayoutIDs).count == result.quarantinedImportedLayoutIDs.count,
-              Set(result.layouts.map(\.id)).isSuperset(of: result.quarantinedImportedLayoutIDs),
-              (try? LayoutImportCodec.validateCollisions(result.layouts, against: [])) != nil else { throw StoreError.invalid }
+              Set(result.layouts.map(\.id)).isSuperset(of: result.quarantinedImportedLayoutIDs) else { throw StoreError.invalid }
         return result
     }
 

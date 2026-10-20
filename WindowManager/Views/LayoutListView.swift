@@ -112,7 +112,7 @@ struct LayoutListView: View {
             Button("Import \(importPreview?.layouts.count ?? 0) Layouts") { confirmImport() }
             Button("Cancel", role: .cancel) { importPreview = nil }
         } message: {
-            Text("Add \(importPreview?.layouts.count ?? 0) layouts: \(importPreview?.layouts.map(\.name).joined(separator: ", ") ?? ""). Existing layouts are never replaced. Imported layouts remain excluded from Auto-apply even if restored manually. Backup metadata remains private in the local store.")
+            Text("Add \(importPreview?.layouts.count ?? 0) layouts to \(layoutStorage.layouts.count) saved layouts? Existing layouts are never replaced. Imported layouts remain excluded from Auto-apply even if restored manually. The backup contains private window titles, app names, geometry and display metadata; keep the file and device backups private. Nothing is uploaded.")
         }
         .alert("Backup Import", isPresented: $showingImportResult) {
             Button("OK", role: .cancel) {}

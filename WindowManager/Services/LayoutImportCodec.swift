@@ -90,6 +90,12 @@ enum LayoutImportCodec {
         return layouts
     }
 
+    static func checkJSONKeys(_ data: Data) throws {
+        guard data.count <= maxBytes else { throw ImportError.invalid }
+        var scanner = JSONKeyScanner(data)
+        try scanner.check()
+    }
+
     static func validateCollisions(_ incoming: [Layout], against existing: [Layout]) throws {
         var ids = Set<UUID>()
         var names = Set<String>()

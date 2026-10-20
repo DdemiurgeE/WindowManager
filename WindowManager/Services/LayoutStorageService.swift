@@ -83,6 +83,15 @@ final class LayoutStorageService: ObservableObject {
         return latest.layouts
     }
 
+    /// Explicit recovery after an ambiguous post-rename outcome; never replay the import.
+    func reconcileStorage() throws {
+        let resolved = try store.reconcile()
+        current = resolved
+        layouts = resolved.layouts
+        generation += 1
+        storageAvailable = true
+    }
+
     private func commit(_ layouts: [Layout], quarantined: Set<UUID>, install: Bool = false) throws {
         guard let current, storageAvailable else { throw TransactionalLayoutStore.StoreError.unavailable }
         do {

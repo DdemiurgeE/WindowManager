@@ -96,14 +96,67 @@ import Darwin
         ambiguousStore.fault = .afterRename
         do { try ambiguous.saveLayout(Layout(name: "Uncertain", windows: [])); preconditionFailure("Ambiguous accepted") } catch {}
         precondition(!ambiguous.storageAvailable && ambiguous.layouts.map(\.id) == before && defaults.data(forKey: "SavedLayouts") == oldBytes)
-        let reconciled = try ambiguousStore.reconcile()
-        precondition(reconciled.layouts.count == before.count + 1)
+        do { try ambiguous.saveLayout(Layout(name: "Blind retry", windows: [])); preconditionFailure("Ambiguous retry accepted") } catch {}
+        try ambiguous.reconcileStorage()
+        precondition(ambiguous.storageAvailable && ambiguous.layouts.count == before.count + 1)
         let afterRestart = LayoutStorageService(store: TransactionalLayoutStore(directory: serviceStore.directory, defaults: defaults))
         precondition(afterRestart.layouts.count == before.count + 1)
-        for (name, content) in [
+        // Each post-rename failure can leave new canonical bytes despite an error.
+        // Recover from the authoritative file before accepting another operation.
+        for (index, point) in [TransactionalLayoutStore.Fault.afterSync, .beforeReadback].enumerated() {
+            let store = TransactionalLayoutStore(directory: serviceStore.directory, defaults: defaults)
+            let session = LayoutStorageService(store: store)
+            let previous = try Data(contentsOf: target)
+            let candidate = Layout(name: "Post-rename \(index)", windows: [])
+            let preview = try session.prepareImport(try LayoutImportCodec.export([candidate]))
+            store.fault = point
+            do { try session.confirmImport(preview); preconditionFailure("Post-rename fault accepted") } catch {}
+            let authoritative = try Data(contentsOf: target)
+            precondition(authoritative != previous && !session.storageAvailable)
+            precondition(session.layouts.contains(where: { $0.id == candidate.id }) == false)
+            precondition(!session.eligibleForAutoApply(candidate.id))
+            do { try session.confirmImport(preview); preconditionFailure("Blind retry accepted") } catch {}
+            try session.reconcileStorage()
+            precondition(session.storageAvailable && session.layouts.contains(where: { $0.id == candidate.id }))
+            precondition(!session.eligibleForAutoApply(candidate.id))
+            do { try session.confirmImport(preview); preconditionFailure("Stale preview accepted") } catch {}
+            let reopened = LayoutStorageService(store: TransactionalLayoutStore(directory: serviceStore.directory, defaults: defaults))
+            precondition(reopened.layouts.map(\.id) == session.layouts.map(\.id))
+            precondition(defaults.data(forKey: "SavedLayouts") == oldBytes)
+        }
+        let validPayload = try JSONSerialization.jsonObject(with: Data(contentsOf: target)) as! [String: Any]
+        func corrupted(_ change: (inout [String: Any]) -> Void) throws -> Data {
+            var payload = validPayload
+            change(&payload)
+            return try JSONSerialization.data(withJSONObject: payload)
+        }
+        let invalidCanonical: [Data] = try [
+            corrupted { $0["quarantinedImportedLayoutIDs"] = [UUID().uuidString] },
+            corrupted { $0["quarantinedImportedLayoutIDs"] = [new.id.uuidString, new.id.uuidString] },
+            corrupted { payload in
+                var layouts = payload["layouts"] as! [[String: Any]]
+                layouts[0]["name"] = "   "
+                payload["layouts"] = layouts
+            },
+            corrupted { payload in
+                var layouts = payload["layouts"] as! [[String: Any]]
+                var windows = layouts[0]["windows"] as! [[String: Any]]
+                windows[0]["frame"] = [[0, 0], [-4, 20]]
+                layouts[0]["windows"] = windows
+                payload["layouts"] = layouts
+            },
+            corrupted { payload in
+                var layouts = payload["layouts"] as! [[String: Any]]
+                layouts[0]["unexpected"] = "discarded by Codable"
+                payload["layouts"] = layouts
+            },
+            corrupted { $0["unexpected"] = true }
+        ]
+        let brokenFixtures: [(String, Data)] = [
             ("corrupt", Data("{broken".utf8)),
             ("future", Data("{\"version\":99,\"layouts\":[],\"quarantinedImportedLayoutIDs\":[]}".utf8))
-        ] {
+        ] + invalidCanonical.enumerated().map({ ("invalid-\($0.offset)", $0.element) })
+        for (name, content) in brokenFixtures {
             let dir = base.appendingPathComponent(name)
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
             try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
@@ -120,6 +173,6 @@ import Darwin
         try fm.createSymbolicLink(at: linkDir.appendingPathComponent("SavedLayouts-v1.json"), withDestinationURL: target)
         let linkStore = LayoutStorageService(store: TransactionalLayoutStore(directory: linkDir, defaults: defaults))
         precondition(!linkStore.storageAvailable && linkStore.layouts.isEmpty)
-        print("LayoutImportTests: legacy/versioned, privacy, preview, pre/post rename faults, stale writer, quarantine and restart passed")
+        print("LayoutImportTests: legacy/versioned, preview, pre/post rename faults, reconciliation, strict canonical validation, stale writer, quarantine and restart passed")
     }
 }
