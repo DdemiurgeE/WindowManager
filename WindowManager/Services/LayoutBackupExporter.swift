@@ -4,10 +4,7 @@ import Darwin
 /// Explicit, local-only snapshot export. Never reads or writes SavedLayouts.
 enum LayoutBackupExporter {
     static func encode(_ layouts: [Layout]) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601 // Same contract as LayoutStorageService.
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(layouts)
+        return try LayoutImportCodec.export(layouts)
     }
 
     static func export(

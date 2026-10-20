@@ -15,7 +15,7 @@ WindowManager is a SwiftUI + AppKit macOS menu-bar application for saving and re
   - normalized `relativeFrame`;
   - observed display ID, display geometry, visible frame, scale, and legacy display index;
   - capture timestamp.
-- Stores user layouts as ISO-8601 JSON in local `UserDefaults` under the `SavedLayouts` key. An explicit local backup export is available; there is no import, sync, or remote storage.
+- Stores layouts in local `SavedLayouts` until an explicitly confirmed import installs a private transactional Application Support file. The original defaults value remains a pre-import fallback snapshot; there is no sync or remote storage.
 - Restores window frames through `AXUIElementSetAttributeValue`, then reads position and size back to report the effective result.
 - Provides Menu Bar actions to apply a saved layout, save the current layout, toggle Auto-apply, open the main window, and quit.
 - Monitors display-configuration changes and can automatically apply the most recently used matching layout.
@@ -57,7 +57,15 @@ Restore results are based on Accessibility writes and read-back. A window can be
 
 ### Exporting a backup
 
-In **Saved Layouts**, select **Export Backup…**, read the privacy warning, and choose a local destination. The JSON file contains **all** saved layouts, including window titles, app names, geometry, display metadata, IDs, and ISO-8601 dates. Treat it as private; WindowManager does not upload it. An empty list exports as `[]`. Cancel leaves the destination untouched; a failed export reports an error without changing saved layouts. This is a portable legacy `[Layout]` JSON snapshot, not an import or restore action. Keep a separate copy of any backup you overwrite.
+In **Saved Layouts**, select **Export Backup…**, read the privacy warning, and choose a local destination. The versioned JSON envelope contains all saved layouts, including private window titles, app names, geometry, display metadata, IDs and ISO-8601 dates. Treat it as private; WindowManager does not upload it. An empty list exports `"layouts": []`. Cancel leaves the destination untouched; a failed export does not change saved layouts. Keep a separate copy of any backup you overwrite.
+
+### Importing a backup (v2.8)
+
+Choose **Import Backup…** and select a local JSON file. The non-writing preview validates the whole backup before explicit confirmation. Both v2.7 unversioned `[Layout]` and v2.8 `{ "format":"com.windowmanager.layouts", "schemaVersion":1, "exportedAt":..., "layouts":[...] }` are supported. Duplicate IDs/names, existing collisions, invalid/future schemas, malformed geometry and files over 16 MiB are rejected as a whole; there is no overwrite, silent rename, AX restore or cloud action. Empty imports are no-ops. Imported layouts retain `lastUsed` but are excluded from Auto-apply even after manual restore; v2.8 has no opt-in to change this.
+
+The first confirmed import writes a 0600 file in a 0700 `obelisk.WindowManager` folder under the user Application Support directory. There is no launch-time migration. The original `SavedLayouts` defaults value is never deleted or rewritten by import and remains a fallback *only while the private file is absent*. Once present, the private file takes precedence for loads and edits. A corrupt or unsupported file disables edits and Auto-apply instead of silently falling back. After upgrade, older binaries see only the stale defaults snapshot; do not edit in an older version concurrently with v2.8. Export before downgrading. This file is included in normal system backups and contains sensitive metadata; consider encrypted backups. Durability relies on local filesystem rename/fsync semantics and cooperative writers, not universal hardware failure guarantees.
+
+New exports use UTC ISO-8601 millisecond precision; v2.7 second-precision exports cannot recover lost fractions. UUIDs, ordering, optional metadata and geometry are preserved within the supported date precision. A post-rename failure can have an uncertain outcome: edits and Auto-apply are disabled until a restart/re-read; do not blindly retry import.
 
 ### 4. Automatic application
 
@@ -87,8 +95,8 @@ Current project settings:
 - Scheme: `WindowManager`
 - Bundle ID: `obelisk.WindowManager`
 - Swift: `5.0`
-- Marketing version: `2.7`
-- Build: `5`
+- Marketing version: `2.8`
+- Build: `6`
 - macOS deployment target: `26.2`
 
 ## Building from source
@@ -128,7 +136,9 @@ WindowManager/
 │   ├── FrameRestoreEngine.swift    # AX write, timing, drift correction, read-back
 │   ├── ScreenResolver.swift        # Display selection and frame resolution
 │   ├── WindowAssignment.swift       # Current-window matching
-│   ├── LayoutStorageService.swift  # Persists layouts in UserDefaults
+│   ├── LayoutStorageService.swift  # Coordinates legacy and transactional layouts
+│   ├── TransactionalLayoutStore.swift # Private post-import authoritative file
+│   ├── LayoutImportCodec.swift     # Bounded legacy/versioned JSON validation
 │   ├── PermissionsService.swift    # Checks/requests macOS permissions
 │   ├── ScreenMonitorService.swift  # Stable-topology Auto-apply lifecycle
 │   └── StatusBarService.swift      # Menu Bar integration
@@ -153,7 +163,7 @@ Russian documentation is available in [`docs/ARCHITECTURE.ru.md`](docs/ARCHITECT
 - Display IDs are observation keys and can change after reconnect. Normalized coordinates adapt to geometry but do not prove that two IDs refer to the same physical monitor; vendor/model/serial fingerprints are not stored.
 - Older layouts remain decodable, but layouts without newer display metadata rely on resolver fallbacks and cannot claim exact display identity.
 - Accessibility is required for capture and restore. Screen Recording status is checked heuristically through window-list access.
-- Backup export is manual and local only; there is no import or sync mechanism.
+- Import/export are manual and local only; there is no sync mechanism. Concurrent old binaries and hardware/power failures are outside the private store's cooperative-writer guarantee.
 - The automated verification does not mutate live windows or displays. The WindowManager scheme has no test action, so `xcodebuild test` is not available for this target.
 
 ## Repository

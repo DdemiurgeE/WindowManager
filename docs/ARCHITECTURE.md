@@ -6,7 +6,7 @@ Russian version: [`ARCHITECTURE.ru.md`](ARCHITECTURE.ru.md)
 
 ## Purpose and runtime components
 
-WindowManager is a SwiftUI + AppKit macOS menu-bar application that captures window layouts and restores them through the Accessibility API. SwiftUI provides the main window, layout list, save sheet, and permissions UI; AppKit provides the status item, running applications, displays, and application lifecycle; `UserDefaults` stores layouts locally; `ApplicationServices` reads and changes third-party window frames.
+WindowManager is a SwiftUI + AppKit macOS menu-bar application that captures window layouts and restores them through the Accessibility API. SwiftUI provides the main window, layout list, save sheet, and permissions UI; AppKit provides the status item, running applications, displays, and application lifecycle; `LayoutStorageService` coordinates local storage; `ApplicationServices` reads and changes third-party window frames.
 
 ```text
 WindowManagerApp
@@ -23,7 +23,9 @@ On startup, `WindowManagerApp` creates and injects `WindowService`, `Permissions
 
 ## Persisted data model
 
-`Layout` contains an id, user-visible name, captured `windows`, creation date, optional `lastUsed` date, and optional `screenConfiguration`. `LayoutStorageService` encodes the layouts as ISO-8601 JSON in `UserDefaults` under `SavedLayouts`. Explicit local backup export reuses that `[Layout]` encoding with an atomic file write after the user chooses a destination; it neither changes `SavedLayouts` nor imports, syncs, or uploads data.
+`Layout` contains an id, user-visible name, captured `windows`, creation date, optional `lastUsed` date, and optional `screenConfiguration`. Before the first confirmed import, `LayoutStorageService` reads and writes the legacy ISO-8601 `[Layout]` JSON in `UserDefaults` under `SavedLayouts`. Explicit backup export writes a portable versioned envelope with `format=com.windowmanager.layouts`, `schemaVersion=1`, `exportedAt` and ordered `layouts`; legacy `[Layout]` backups remain importable. `LayoutImportCodec` checks bounds, duplicate JSON keys, schemas, finite geometry, IDs, dates and collisions before a non-mutating preview; version 1 emits UTC millisecond dates and also accepts legacy whole-second ISO-8601 dates.
+
+The first confirmed import stages old and incoming layouts in one `TransactionalLayoutStore` payload (`version=1`, ordered layouts and `quarantinedImportedLayoutIDs`) under the user's Application Support/`obelisk.WindowManager` directory. The app-specific directory is 0700 and the canonical `SavedLayouts-v1.json` file 0600; a separate stable lock serializes cooperative writers. The canonical file is written through a same-directory private temporary file, fsynced, renamed and followed by directory fsync and read-back before publishing memory. An error before rename leaves the previous canonical bytes and memory unchanged. An error after rename is **ambiguous**: mutations and Auto-apply freeze rather than falsely reporting unchanged bytes. Recovery reads and strictly validates the actual canonical file, fsyncs its directory, then replaces the published snapshot; the UI directs users to restart rather than retry blindly. On a supported local filesystem, a crash before rename retains old canonical bytes (or the legacy blob on first import); a crash around rename/directory sync can recover complete old **or** complete new canonical bytes, never a promised rollback. A missing, invalid or unsupported canonical file after an ambiguous outcome remains blocked pending manual recovery. The original `SavedLayouts` blob is never deleted or changed by import; it remains a fallback only when the canonical file is absent. A corrupt, unsupported, insecure or unreadable canonical file fails closed. File edits compare the previously read bytes under the stable lock and reject stale writers. Older binaries cannot cooperate with the new lock and may mutate the stale defaults snapshot; no automatic reverse migration exists. Local fsync/rename, read-back and cooperative single-writer assumptions are not universal power-loss or hostile same-user guarantees. Synthetic fault tests exercise the production store with isolated fixtures, not physical power cuts. The authoritative data remains in ordinary user backups, so users should consider encrypted backup storage.
 
 ### WindowInfo
 
@@ -122,7 +124,7 @@ When Auto-apply is enabled (the `UserDefaults` key is `autoApplyEnabled`, defaul
 2. It requires three consecutive equal snapshots before applying; geometry and scale are part of the current snapshot.
 3. If stability is not reached within 10 seconds, it skips the auto-apply rather than treating an unstable topology as safe.
 4. It matches layouts by screen IDs and, when both configurations contain geometry, by complete `ScreenConfiguration` equality.
-5. It selects the most recently used matching layout (layouts with `lastUsed` sort ahead of never-used layouts).
+5. It excludes imported layout IDs persisted in the same store transaction (even after manual restore or last-used updates), then selects the most recently used eligible matching layout. Eligibility is checked again before initial restore and each retry; unavailable or changed storage fails closed.
 6. It records `started` and `completed`, `noMatch`, or `cancelled` events in an in-memory restore log capped at 20 entries.
 7. It records `lastUsed` as the time of the latest apply attempt; this field is not evidence that every window was restored successfully. The UI labels it “Last attempted”.
 
@@ -138,7 +140,7 @@ The UI keeps the last `RestoreResult` and an in-memory history capped at 20 resu
 
 ## Backward compatibility and limitations
 
-- Layouts remain local `UserDefaults` JSON; only explicit local backup export is supported, not import or synchronization.
+- Layouts remain local. Import and export require explicit action; there is no cloud synchronization or automatic launch migration. Older binaries see the stale original defaults snapshot after first import.
 - Missing optional `WindowInfo` and `ScreenConfiguration` metadata is supported for older layouts. Such layouts may use frame-center, index, or absolute-frame fallbacks and cannot claim exact display identity.
 - The app does not launch missing applications.
 - Dynamic titles and changing application window sets can prevent assignment; bundle IDs and AX role metadata improve matching but do not guarantee it.
@@ -164,7 +166,7 @@ xcodebuild \
 
 ## Possible future improvements
 
-- Import of exported layouts (not available yet).
+- Explicit per-layout durable opt-in for imported layout Auto-apply (not available in v2.8).
 - More robust matching for dynamic window titles.
 - Launching missing applications.
 - User-configurable exclusions and keyboard shortcuts.

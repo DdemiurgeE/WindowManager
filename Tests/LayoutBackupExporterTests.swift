@@ -25,7 +25,7 @@ struct LayoutBackupExporterTests {
             visibleFrame: CGRect(x: -800, y: 20, width: 800, height: 580), scale: 2)
         let window = WindowInfo(
             appName: "Synthetic App", windowTitle: "Synthetic title",
-            frame: CGRect(x: -500, y: 50, width: 600, height: 400), screenIndex: 1,
+            frame: CGRect(x: -500, y: 50, width: 600, height: 400), screenIndex: 0,
             relativeFrame: CGRect(x: 0.2, y: 0.1, width: 0.6, height: 0.7),
             screenID: screen.id, bundleIdentifier: "example.synthetic", axRole: "AXWindow",
             axSubrole: "AXStandardWindow", savedDisplayFrame: screen.frame,
@@ -35,14 +35,13 @@ struct LayoutBackupExporterTests {
         let legacyStyle = Layout(name: "Second synthetic layout", windows: [WindowInfo(
             appName: "Legacy synthetic", windowTitle: "Older fields", frame: CGRect(x: 0, y: 0, width: 200, height: 150), screenIndex: 0)])
         let originals = [layout, legacyStyle]
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+
 
         try LayoutBackupExporter.export(originals, to: destination)
         try assertPrivateBackup()
         try assertNoTemporaryFiles()
         let data = try Data(contentsOf: destination)
-        let decoded = try decoder.decode([Layout].self, from: data)
+        let decoded = try LayoutImportCodec.decode(data)
         precondition(decoded.count == 2 && decoded[0].id == layout.id)
         precondition(decoded[0].name == layout.name && decoded[0].createdAt.timeIntervalSince1970.rounded(.down) == layout.createdAt.timeIntervalSince1970.rounded(.down))
         precondition(decoded[0].lastUsed == layout.lastUsed)
@@ -120,8 +119,8 @@ struct LayoutBackupExporterTests {
         try assertPrivateBackup()
         try assertNoTemporaryFiles()
         let emptyData = try Data(contentsOf: destination)
-        let emptyLayouts = try decoder.decode([Layout].self, from: emptyData)
+        let emptyLayouts = try LayoutImportCodec.decode(emptyData)
         precondition(emptyLayouts.isEmpty)
-        print("LayoutBackupExporterTests: legacy roundtrip, private new/replaced backup, partial/encode/destination failure safety, empty backup passed")
+        print("LayoutBackupExporterTests: versioned roundtrip, private new/replaced backup, partial/encode/destination failure safety, empty backup passed")
     }
 }
