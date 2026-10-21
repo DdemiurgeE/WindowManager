@@ -42,6 +42,10 @@ struct RestorePlanResultMappingTests {
         check(summary.windowsTotal == 1 && summary.windowsRestored == 0 && summary.skippedCount == 0,
               "coordinateUnavailable is neither positionSet nor ordinary skipped")
         check(summary.summaryDescription == "0/1 windows restored", "summary does not count unavailable coordinates")
+        check(RestoreResultMapping.retryableMissingIDs(in: layout.windows, results: [unavailableResult]) == Set([saved.id]),
+              "automatic retry retains unavailable coordinates by saved ID")
+        check(RestoreResultMapping.retryableIDs(in: [unavailableResult]) == Set([saved.id]),
+              "manual retry retains unavailable coordinates by saved ID")
 
         let unmatched = planner.plan(layout: layout, current: [], displays: []).items[0]
         check(unmatched.skipReason == .noIdentityMatch, "ordinary no-match retains planner reason")
@@ -50,6 +54,9 @@ struct RestorePlanResultMappingTests {
         check(positionSets == 0 && sizeSets == 0, "no-match causes no fake AX setters")
         check(RestoreResult(layoutName: layout.name, windowsResults: [unmatchedResult]).skippedCount == 1,
               "ordinary skip remains counted")
+        check(RestoreResultMapping.retryableMissingIDs(in: layout.windows, results: [unmatchedResult]) == Set([saved.id]) &&
+              RestoreResultMapping.retryableIDs(in: [unmatchedResult]) == Set([saved.id]),
+              "ordinary no-match remains eligible for automatic and manual retry")
         print("RestorePlanResultMappingTests: all tests passed")
     }
 }

@@ -85,14 +85,14 @@ enum RestoreResultMapping {
         let statuses = statuses(for: results)
         return Set(windows.compactMap { window in
             guard let status = statuses[window.id] else { return window.id }
-            return status == .appNotFound || status == .windowSkipped ? window.id : nil
+            return status == .appNotFound || status == .windowSkipped || status == .coordinateUnavailable ? window.id : nil
         })
     }
 
     static func retryableIDs(in results: [WindowRestoreResult]) -> Set<UUID> {
         Set(results.compactMap { result in
             switch result.status {
-            case .appNotFound, .windowSkipped, .axFailure: return result.id
+            case .appNotFound, .windowSkipped, .coordinateUnavailable, .axFailure: return result.id
             default: return nil
             }
         })
