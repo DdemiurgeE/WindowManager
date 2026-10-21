@@ -91,6 +91,7 @@ class WindowService: ObservableObject {
     @Published var currentWindows: [WindowInfo] = []
     @Published var isCapturing = false
     @Published private(set) var lastRestoreResult: RestoreResult?
+    @Published private(set) var restoreResultRevision = 0
     private(set) var restoreHistory: [RestoreResult] = []
     private let maxRestoreHistoryEntries = 20
     private let axClient: AXWindowClient
@@ -295,6 +296,7 @@ class WindowService: ObservableObject {
 
     private func record(_ result: RestoreResult) -> RestoreResult {
         lastRestoreResult = result
+        restoreResultRevision += 1
         restoreHistory.append(result)
         if restoreHistory.count > maxRestoreHistoryEntries {
             restoreHistory.removeFirst()

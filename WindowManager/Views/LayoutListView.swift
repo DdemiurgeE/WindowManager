@@ -27,6 +27,7 @@ struct LayoutListView: View {
     @State private var showingImportResult = false
     @State private var importResult = ""
     @AppStorage("includeDetailedRestoreDiagnostics") private var includeDetailedDiagnostics = false
+    @State private var diagnosticsPresentation = RestoreDiagnosticsPresentation()
     
     var body: some View {
         VStack {
@@ -69,14 +70,27 @@ struct LayoutListView: View {
                     }
                 }
                 .listStyle(.inset)
+                .frame(height: 220)
             }
             if let result = windowService.lastRestoreResult,
                layoutStorage.layouts.contains(where: { $0.id == result.layoutID }) {
-                RestoreDiagnosticsView(result: result, includeDetails: $includeDetailedDiagnostics,
+                RestoreDiagnosticsView(result: result, isExpanded: diagnosticsPresentation.isExpanded,
+                    includeDetails: $includeDetailedDiagnostics,
+                    onToggle: {
+                        if diagnosticsPresentation.isExpanded {
+                            diagnosticsPresentation.hide()
+                        } else {
+                            diagnosticsPresentation.show()
+                        }
+                    },
                     onRetry: { retryLayout(result.layoutID) })
                     .padding(.horizontal)
                     .padding(.bottom, 8)
             }
+        }
+        .onAppear { diagnosticsPresentation.observe(windowService.restoreResultRevision) }
+        .onChange(of: windowService.restoreResultRevision) { _, revision in
+            diagnosticsPresentation.observe(revision)
         }
         .navigationTitle("Saved Layouts")
         .toolbar {
@@ -223,7 +237,9 @@ struct LayoutListView: View {
 
 struct RestoreDiagnosticsView: View {
     let result: RestoreResult
+    let isExpanded: Bool
     @Binding var includeDetails: Bool
+    let onToggle: () -> Void
     let onRetry: () -> Void
 
     var body: some View {
@@ -231,32 +247,46 @@ struct RestoreDiagnosticsView: View {
             HStack {
                 Label("Last restore: \(result.layoutName)", systemImage: "checkmark.circle")
                     .font(.headline)
+                    .lineLimit(1)
                 Spacer()
-                Button("Copy diagnostics") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(
-                        RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: includeDetails),
-                        forType: .string)
-                }
-                .buttonStyle(.borderless)
+                Button(isExpanded ? "Hide diagnostics" : "Show diagnostics", action: onToggle)
+                    .buttonStyle(.borderless)
             }
             Text("Verified restored: \(result.windowsRestored) • Missing/skipped: \(result.skippedCount) • AX failures: \(result.accessibilityFailureCount) • App clamps: \(result.clampCount)")
                 .font(.caption)
                 .foregroundColor(.secondary)
-            Toggle("Include app and window names in copied details (explicit consent)", isOn: $includeDetails)
-                .font(.caption)
-            HStack {
-                Text(RestoreResult.lastUsedPolicyDescription)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                Spacer()
-                Button("Retry only missing / failed", action: onRetry)
-                    .disabled(RestoreResultMapping.retryableIDs(in: result.windowsResults).isEmpty)
-            }
-            if includeDetails {
-                ForEach(result.windowsResults) { item in
-                    Text("\(item.appName) — \(item.windowTitle): \(item.status.rawValue)")
+            if isExpanded {
+                HStack {
+                    Toggle("Include app and window names in copied details (explicit consent)", isOn: $includeDetails)
+                        .font(.caption)
+                    Button("Copy diagnostics") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(
+                            RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: includeDetails),
+                            forType: .string)
+                    }
+                    .buttonStyle(.borderless)
+                }
+                HStack {
+                    Text(RestoreResult.lastUsedPolicyDescription)
                         .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Retry only missing / failed", action: onRetry)
+                        .disabled(RestoreResultMapping.retryableIDs(in: result.windowsResults).isEmpty)
+                }
+                if includeDetails {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(result.windowsResults) { item in
+                                Text("\(item.appName) — \(item.windowTitle): \(item.status.rawValue)")
+                                    .font(.caption2)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 140)
                 }
             }
         }
