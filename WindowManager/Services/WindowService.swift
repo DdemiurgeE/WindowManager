@@ -267,14 +267,7 @@ class WindowService: ObservableObject {
         let results = plan.items.map { item -> WindowRestoreResult in
             guard let frame = item.targetFrame, let candidateID = item.candidateID,
                   let element = elements[candidateID] else {
-                let status: WindowRestoreResult.WindowRestoreStatus = {
-                    switch item.skipReason {
-                    case .appNotFound: return .appNotFound
-                    case .axFailure: return .axFailure
-                    default: return .windowSkipped
-                    }
-                }()
-                return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: item.windowTitle, status: status)
+                return RestorePlanResultMapping.result(forSkipped: item)
             }
             guard coordinateConverter != nil else {
                 return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: item.windowTitle, status: .coordinateUnavailable)
