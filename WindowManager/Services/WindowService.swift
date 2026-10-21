@@ -91,6 +91,11 @@ class WindowService: ObservableObject {
     @Published var currentWindows: [WindowInfo] = []
     @Published var isCapturing = false
     @Published private(set) var lastRestoreResult: RestoreResult?
+    @Published private(set) var restoreResultRevision = 0
+    @Published private(set) var diagnosticsPresentation = RestoreDiagnosticsPresentation()
+    var restoreDiagnosticsExpanded: Bool {
+        diagnosticsPresentation.isExpanded(for: restoreResultRevision)
+    }
     private(set) var restoreHistory: [RestoreResult] = []
     private let maxRestoreHistoryEntries = 20
     private let axClient: AXWindowClient
@@ -198,7 +203,7 @@ class WindowService: ObservableObject {
         // Отсеиваем окна полностью вне всех экранов
         let allScreensUnion = screens.reduce(CGRect.null) { $0.union($1.frame) }
         guard screenFrame.intersects(allScreensUnion) else {
-            print("Skipping window '\(title)' - outside screen bounds (ax: \(axPosition), screen: \(screenFrame))")
+            print("Skipping window - outside screen bounds (ax: \(axPosition), screen: \(screenFrame))")
             return nil
         }
 
@@ -215,7 +220,7 @@ class WindowService: ObservableObject {
             height: screenFrame.height / targetScreen.frame.height
         )
 
-        print("Captured '\(title)' on screen \(screenIndex) [relative=\(relativeFrame)]")
+        print("Captured window on screen \(screenIndex) [relative=\(relativeFrame)]")
         return WindowInfo(
             appName: appName,
             windowTitle: title,
@@ -262,14 +267,7 @@ class WindowService: ObservableObject {
         let results = plan.items.map { item -> WindowRestoreResult in
             guard let frame = item.targetFrame, let candidateID = item.candidateID,
                   let element = elements[candidateID] else {
-                let status: WindowRestoreResult.WindowRestoreStatus = {
-                    switch item.skipReason {
-                    case .appNotFound: return .appNotFound
-                    case .axFailure: return .axFailure
-                    default: return .windowSkipped
-                    }
-                }()
-                return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: item.windowTitle, status: status)
+                return RestorePlanResultMapping.result(forSkipped: item)
             }
             guard coordinateConverter != nil else {
                 return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: item.windowTitle, status: .coordinateUnavailable)
@@ -293,13 +291,23 @@ class WindowService: ObservableObject {
         return restoreLayout(layout, windowIDs: ids)
     }
 
-    private func record(_ result: RestoreResult) -> RestoreResult {
+    @discardableResult
+    func record(_ result: RestoreResult) -> RestoreResult {
         lastRestoreResult = result
+        restoreResultRevision += 1
         restoreHistory.append(result)
         if restoreHistory.count > maxRestoreHistoryEntries {
             restoreHistory.removeFirst()
         }
         return result
+    }
+
+    func hideRestoreDiagnostics() {
+        diagnosticsPresentation.hide(restoreResultRevision)
+    }
+
+    func showRestoreDiagnostics() {
+        diagnosticsPresentation.show()
     }
 
     /// Computes the exact decisions used by `restoreLayout` without calling an AX setter.

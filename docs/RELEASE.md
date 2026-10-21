@@ -1,5 +1,21 @@
 # WindowManager release model
 
+## v2.9 — restore diagnostics and retry (local candidate; live acceptance pending)
+
+The last-restore card retains its dismissed state across view remounts; Show/Hide
+still works, and optional per-window details remain bounded. Restore diagnostics
+distinguish verified positions, application clamps, AX failures, skipped/missing
+windows and unavailable display coordinates. An unavailable-only result is visible
+in both compact and copied counts and remains eligible for retry; these counts
+are selected outcomes, not an exhaustive partition of all statuses.
+
+Copied diagnostics omit layout, application and window names by default. Explicit
+opt-in includes those names; capture/offscreen-skip console messages no longer
+interpolate window titles. This is a local candidate at `MARKETING_VERSION=2.9`
+and `CURRENT_PROJECT_VERSION=7`: synthetic QA and an unsigned macOS build do not
+constitute live visual, Accessibility, or real-window acceptance. Do not publish
+until independent exact-commit QA and review pass and live acceptance is decided.
+
 ## v2.8 — local import (synthetic QA/review passed; live acceptance pending)
 
 Manual **Import Backup…** accepts v2.7 unversioned `[Layout]` and v2.8 versioned

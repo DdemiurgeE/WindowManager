@@ -56,6 +56,9 @@ struct RestoreResult {
     var summaryDescription: String {
         "\(windowsRestored)/\(windowsTotal) windows restored"
     }
+    var compactDiagnosticsDescription: String {
+        "Verified restored: \(windowsRestored) • Missing/skipped: \(skippedCount) • AX failures: \(accessibilityFailureCount) • App clamps: \(clampCount) • Coordinates unavailable: \(coordinateUnavailableCount)"
+    }
 
     var skippedCount: Int {
         windowsResults.filter { $0.status == .appNotFound || $0.status == .windowSkipped }.count
@@ -67,6 +70,9 @@ struct RestoreResult {
 
     var clampCount: Int {
         windowsResults.filter { $0.status == .appImposedClamp }.count
+    }
+    var coordinateUnavailableCount: Int {
+        windowsResults.filter { $0.status == .coordinateUnavailable }.count
     }
 
     /// `lastUsed` records that an apply was attempted, never that it succeeded.
@@ -85,14 +91,14 @@ enum RestoreResultMapping {
         let statuses = statuses(for: results)
         return Set(windows.compactMap { window in
             guard let status = statuses[window.id] else { return window.id }
-            return status == .appNotFound || status == .windowSkipped ? window.id : nil
+            return status == .appNotFound || status == .windowSkipped || status == .coordinateUnavailable ? window.id : nil
         })
     }
 
     static func retryableIDs(in results: [WindowRestoreResult]) -> Set<UUID> {
         Set(results.compactMap { result in
             switch result.status {
-            case .appNotFound, .windowSkipped, .axFailure: return result.id
+            case .appNotFound, .windowSkipped, .coordinateUnavailable, .axFailure: return result.id
             default: return nil
             }
         })
@@ -100,13 +106,14 @@ enum RestoreResultMapping {
 
     static func redactedDiagnostics(for result: RestoreResult, includeWindowDetails: Bool) -> String {
         var lines = [
-            "Layout: \(result.layoutName)",
             "Restored: \(result.windowsRestored)/\(result.windowsTotal)",
             "Skipped or missing: \(result.skippedCount)",
             "Accessibility failures: \(result.accessibilityFailureCount)",
-            "Application clamps: \(result.clampCount)"
+            "Application clamps: \(result.clampCount)",
+            "Coordinates unavailable: \(result.coordinateUnavailableCount)"
         ]
         if includeWindowDetails {
+            lines.insert("Layout: \(result.layoutName)", at: 0)
             lines.append(contentsOf: result.windowsResults.map {
                 "\($0.appName) — \($0.windowTitle): \($0.status.rawValue)"
             })
