@@ -253,7 +253,7 @@ struct RestoreDiagnosticsView: View {
                 .foregroundColor(.secondary)
             if isExpanded {
                 HStack {
-                    Toggle("Include app and window names in copied details (explicit consent)", isOn: $includeDetails)
+                    Toggle("Include layout, app and window names in copied details (explicit consent)", isOn: $includeDetails)
                         .font(.caption)
                     Button("Copy diagnostics") {
                         NSPasteboard.general.clearContents()

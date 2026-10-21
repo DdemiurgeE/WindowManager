@@ -106,7 +106,6 @@ enum RestoreResultMapping {
 
     static func redactedDiagnostics(for result: RestoreResult, includeWindowDetails: Bool) -> String {
         var lines = [
-            "Layout: \(result.layoutName)",
             "Restored: \(result.windowsRestored)/\(result.windowsTotal)",
             "Skipped or missing: \(result.skippedCount)",
             "Accessibility failures: \(result.accessibilityFailureCount)",
@@ -114,6 +113,7 @@ enum RestoreResultMapping {
             "Coordinates unavailable: \(result.coordinateUnavailableCount)"
         ]
         if includeWindowDetails {
+            lines.insert("Layout: \(result.layoutName)", at: 0)
             lines.append(contentsOf: result.windowsResults.map {
                 "\($0.appName) — \($0.windowTitle): \($0.status.rawValue)"
             })

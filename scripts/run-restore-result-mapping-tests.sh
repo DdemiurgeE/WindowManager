@@ -10,3 +10,4 @@ xcrun --sdk macosx swiftc \
   "$ROOT/Tests/RestoreResultMappingTests.swift" \
   -o "$BUILD_DIR/RestoreResultMappingTests"
 "$BUILD_DIR/RestoreResultMappingTests"
+python3 "$ROOT/Tests/check_capture_log_privacy.py"

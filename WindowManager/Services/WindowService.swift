@@ -203,7 +203,7 @@ class WindowService: ObservableObject {
         // Отсеиваем окна полностью вне всех экранов
         let allScreensUnion = screens.reduce(CGRect.null) { $0.union($1.frame) }
         guard screenFrame.intersects(allScreensUnion) else {
-            print("Skipping window '\(title)' - outside screen bounds (ax: \(axPosition), screen: \(screenFrame))")
+            print("Skipping window - outside screen bounds (ax: \(axPosition), screen: \(screenFrame))")
             return nil
         }
 
@@ -220,7 +220,7 @@ class WindowService: ObservableObject {
             height: screenFrame.height / targetScreen.frame.height
         )
 
-        print("Captured '\(title)' on screen \(screenIndex) [relative=\(relativeFrame)]")
+        print("Captured window on screen \(screenIndex) [relative=\(relativeFrame)]")
         return WindowInfo(
             appName: appName,
             windowTitle: title,

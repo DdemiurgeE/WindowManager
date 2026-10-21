@@ -57,13 +57,19 @@ struct RestoreResultMappingTests {
                 "unavailable-only compact diagnostics name the outcome")
         require(RestoreResultMapping.redactedDiagnostics(for: unavailableOnly, includeWindowDetails: false)
                 .contains("Coordinates unavailable: 1"), "unavailable-only copied summary names the outcome")
-        let privateResult = RestoreResult(layoutName: "test", windowsResults: [
+        let privateResult = RestoreResult(layoutName: "SentinelPrivateLayout", windowsResults: [
             WindowRestoreResult(id: ids[0], appName: "PrivateApp", windowTitle: "PrivateTitle", status: .windowSkipped)
         ])
         let redacted = RestoreResultMapping.redactedDiagnostics(for: privateResult, includeWindowDetails: false)
-        require(!redacted.contains("PrivateApp") && !redacted.contains("PrivateTitle"), "default diagnostics are redacted")
+        require(!redacted.contains("SentinelPrivateLayout") && !redacted.contains("PrivateApp") && !redacted.contains("PrivateTitle"),
+                "default diagnostics exclude layout, app and window names")
+        require(redacted.contains("Restored: 0/1") && redacted.contains("Skipped or missing: 1"),
+                "default diagnostics retain aggregate counts")
+        let optedIn = RestoreResultMapping.redactedDiagnostics(for: privateResult, includeWindowDetails: true)
+        require(optedIn.contains("SentinelPrivateLayout") && optedIn.contains("PrivateApp") && optedIn.contains("PrivateTitle"),
+                "explicit opt-in includes layout, app and window names")
         require(RestoreResultMapping.retryableIDs(in: initial) == Set([ids[1], ids[3], ids[4], ids[5]]), "manual retry includes missing, failed, and unavailable IDs")
         require(RestoreResult.lastUsedPolicyDescription.contains("not proof"), "lastUsed policy is explicit")
-        print("RestoreResultMappingTests: 15 checks passed")
+        print("RestoreResultMappingTests: 17 checks passed")
     }
 }
