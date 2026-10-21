@@ -1,6 +1,6 @@
 # WindowManager release model
 
-## v2.9 — restore diagnostics and retry (local candidate; live acceptance pending)
+## v2.9 — restore diagnostics and retry (released; live acceptance pending)
 
 The last-restore card retains its dismissed state across view remounts; Show/Hide
 still works, and optional per-window details remain bounded. Restore diagnostics
@@ -11,10 +11,11 @@ are selected outcomes, not an exhaustive partition of all statuses.
 
 Copied diagnostics omit layout, application and window names by default. Explicit
 opt-in includes those names; capture/offscreen-skip console messages no longer
-interpolate window titles. This is a local candidate at `MARKETING_VERSION=2.9`
-and `CURRENT_PROJECT_VERSION=7`: synthetic QA and an unsigned macOS build do not
-constitute live visual, Accessibility, or real-window acceptance. Do not publish
-until independent exact-commit QA and review pass and live acceptance is decided.
+interpolate window titles. Version `MARKETING_VERSION=2.9` and
+`CURRENT_PROJECT_VERSION=7` was published from tag `v2.9` after independent
+synthetic QA, review, and hosted CI. The release ZIP, DMG, checksums, and signed
+Sparkle feed were verified. Live visual, Accessibility, and real-window
+acceptance was not performed; those behaviors remain unverified in a live session.
 
 ## v2.8 — local import (synthetic QA/review passed; live acceptance pending)
 
