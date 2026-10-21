@@ -248,7 +248,7 @@ struct RestoreDiagnosticsView: View {
                 Button(isExpanded ? "Hide diagnostics" : "Show diagnostics", action: onToggle)
                     .buttonStyle(.borderless)
             }
-            Text("Verified restored: \(result.windowsRestored) • Missing/skipped: \(result.skippedCount) • AX failures: \(result.accessibilityFailureCount) • App clamps: \(result.clampCount)")
+            Text(result.compactDiagnosticsDescription)
                 .font(.caption)
                 .foregroundColor(.secondary)
             if isExpanded {

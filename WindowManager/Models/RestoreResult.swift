@@ -56,6 +56,9 @@ struct RestoreResult {
     var summaryDescription: String {
         "\(windowsRestored)/\(windowsTotal) windows restored"
     }
+    var compactDiagnosticsDescription: String {
+        "Verified restored: \(windowsRestored) • Missing/skipped: \(skippedCount) • AX failures: \(accessibilityFailureCount) • App clamps: \(clampCount) • Coordinates unavailable: \(coordinateUnavailableCount)"
+    }
 
     var skippedCount: Int {
         windowsResults.filter { $0.status == .appNotFound || $0.status == .windowSkipped }.count
@@ -67,6 +70,9 @@ struct RestoreResult {
 
     var clampCount: Int {
         windowsResults.filter { $0.status == .appImposedClamp }.count
+    }
+    var coordinateUnavailableCount: Int {
+        windowsResults.filter { $0.status == .coordinateUnavailable }.count
     }
 
     /// `lastUsed` records that an apply was attempted, never that it succeeded.
@@ -104,7 +110,8 @@ enum RestoreResultMapping {
             "Restored: \(result.windowsRestored)/\(result.windowsTotal)",
             "Skipped or missing: \(result.skippedCount)",
             "Accessibility failures: \(result.accessibilityFailureCount)",
-            "Application clamps: \(result.clampCount)"
+            "Application clamps: \(result.clampCount)",
+            "Coordinates unavailable: \(result.coordinateUnavailableCount)"
         ]
         if includeWindowDetails {
             lines.append(contentsOf: result.windowsResults.map {

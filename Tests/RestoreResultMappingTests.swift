@@ -40,6 +40,23 @@ struct RestoreResultMappingTests {
         require(result.skippedCount == 2 && result.accessibilityFailureCount == 1, "diagnostic counts distinguish missing and AX failures")
         require(result.windowsTotal == 6 && result.clampCount == 0,
                 "unavailable coordinates contribute to total but not success, skip, AX failure, or clamp")
+        require(result.coordinateUnavailableCount == 1, "mixed result counts unavailable coordinates separately")
+        require(result.compactDiagnosticsDescription ==
+                "Verified restored: 2 • Missing/skipped: 2 • AX failures: 1 • App clamps: 0 • Coordinates unavailable: 1",
+                "mixed compact diagnostics retain all selected counters")
+        let mixedCopy = RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: false)
+        require(mixedCopy.contains("Coordinates unavailable: 1") && mixedCopy.contains("Skipped or missing: 2") &&
+                mixedCopy.contains("Accessibility failures: 1"), "mixed copied summary distinguishes failure categories")
+        let unavailableOnly = RestoreResult(layoutName: "test", windowsResults: [initial[5]])
+        require(unavailableOnly.windowsTotal == 1 && unavailableOnly.windowsRestored == 0 &&
+                unavailableOnly.skippedCount == 0 && unavailableOnly.accessibilityFailureCount == 0 &&
+                unavailableOnly.clampCount == 0 && unavailableOnly.coordinateUnavailableCount == 1,
+                "unavailable-only result does not inflate other counters")
+        require(unavailableOnly.compactDiagnosticsDescription ==
+                "Verified restored: 0 • Missing/skipped: 0 • AX failures: 0 • App clamps: 0 • Coordinates unavailable: 1",
+                "unavailable-only compact diagnostics name the outcome")
+        require(RestoreResultMapping.redactedDiagnostics(for: unavailableOnly, includeWindowDetails: false)
+                .contains("Coordinates unavailable: 1"), "unavailable-only copied summary names the outcome")
         let privateResult = RestoreResult(layoutName: "test", windowsResults: [
             WindowRestoreResult(id: ids[0], appName: "PrivateApp", windowTitle: "PrivateTitle", status: .windowSkipped)
         ])
@@ -47,6 +64,6 @@ struct RestoreResultMappingTests {
         require(!redacted.contains("PrivateApp") && !redacted.contains("PrivateTitle"), "default diagnostics are redacted")
         require(RestoreResultMapping.retryableIDs(in: initial) == Set([ids[1], ids[3], ids[4], ids[5]]), "manual retry includes missing, failed, and unavailable IDs")
         require(RestoreResult.lastUsedPolicyDescription.contains("not proof"), "lastUsed policy is explicit")
-        print("RestoreResultMappingTests: 9 checks passed")
+        print("RestoreResultMappingTests: 15 checks passed")
     }
 }
