@@ -27,7 +27,6 @@ struct LayoutListView: View {
     @State private var showingImportResult = false
     @State private var importResult = ""
     @AppStorage("includeDetailedRestoreDiagnostics") private var includeDetailedDiagnostics = false
-    @State private var diagnosticsPresentation = RestoreDiagnosticsPresentation()
     
     var body: some View {
         VStack {
@@ -74,23 +73,20 @@ struct LayoutListView: View {
             }
             if let result = windowService.lastRestoreResult,
                layoutStorage.layouts.contains(where: { $0.id == result.layoutID }) {
-                RestoreDiagnosticsView(result: result, isExpanded: diagnosticsPresentation.isExpanded,
+                RestoreDiagnosticsView(result: result,
+                    isExpanded: windowService.restoreDiagnosticsExpanded,
                     includeDetails: $includeDetailedDiagnostics,
                     onToggle: {
-                        if diagnosticsPresentation.isExpanded {
-                            diagnosticsPresentation.hide()
+                        if windowService.restoreDiagnosticsExpanded {
+                            windowService.hideRestoreDiagnostics()
                         } else {
-                            diagnosticsPresentation.show()
+                            windowService.showRestoreDiagnostics()
                         }
                     },
                     onRetry: { retryLayout(result.layoutID) })
                     .padding(.horizontal)
                     .padding(.bottom, 8)
             }
-        }
-        .onAppear { diagnosticsPresentation.observe(windowService.restoreResultRevision) }
-        .onChange(of: windowService.restoreResultRevision) { _, revision in
-            diagnosticsPresentation.observe(revision)
         }
         .navigationTitle("Saved Layouts")
         .toolbar {

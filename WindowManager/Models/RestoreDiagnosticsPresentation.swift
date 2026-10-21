@@ -1,16 +1,10 @@
-/// Ephemeral UI state. A restore revision advances only when WindowService records a result;
-/// ordinary view updates and repeated appearances must not undo an explicit dismissal.
+/// Ephemeral UI state owned by WindowService, not by a reconstructed view.
+/// Only the revision explicitly dismissed is collapsed; a new result is visible.
 struct RestoreDiagnosticsPresentation {
-    private(set) var isExpanded = true
-    private(set) var observedRevision: Int?
+    private(set) var dismissedRevision: Int?
 
-    mutating func observe(_ revision: Int) {
-        if let observedRevision, observedRevision != revision {
-            isExpanded = true
-        }
-        observedRevision = revision
-    }
+    func isExpanded(for revision: Int) -> Bool { dismissedRevision != revision }
 
-    mutating func hide() { isExpanded = false }
-    mutating func show() { isExpanded = true }
+    mutating func hide(_ revision: Int) { dismissedRevision = revision }
+    mutating func show() { dismissedRevision = nil }
 }

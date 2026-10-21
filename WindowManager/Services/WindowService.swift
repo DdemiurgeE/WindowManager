@@ -92,6 +92,10 @@ class WindowService: ObservableObject {
     @Published var isCapturing = false
     @Published private(set) var lastRestoreResult: RestoreResult?
     @Published private(set) var restoreResultRevision = 0
+    @Published private(set) var diagnosticsPresentation = RestoreDiagnosticsPresentation()
+    var restoreDiagnosticsExpanded: Bool {
+        diagnosticsPresentation.isExpanded(for: restoreResultRevision)
+    }
     private(set) var restoreHistory: [RestoreResult] = []
     private let maxRestoreHistoryEntries = 20
     private let axClient: AXWindowClient
@@ -294,7 +298,8 @@ class WindowService: ObservableObject {
         return restoreLayout(layout, windowIDs: ids)
     }
 
-    private func record(_ result: RestoreResult) -> RestoreResult {
+    @discardableResult
+    func record(_ result: RestoreResult) -> RestoreResult {
         lastRestoreResult = result
         restoreResultRevision += 1
         restoreHistory.append(result)
@@ -302,6 +307,14 @@ class WindowService: ObservableObject {
             restoreHistory.removeFirst()
         }
         return result
+    }
+
+    func hideRestoreDiagnostics() {
+        diagnosticsPresentation.hide(restoreResultRevision)
+    }
+
+    func showRestoreDiagnostics() {
+        diagnosticsPresentation.show()
     }
 
     /// Computes the exact decisions used by `restoreLayout` without calling an AX setter.
