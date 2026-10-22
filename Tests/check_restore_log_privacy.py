@@ -153,12 +153,13 @@ def check(name: str, source: str) -> None:
     for anchor in expected[name]:
         assert source.count(anchor) == 1, f"{name}: missing/duplicated safe anchor: {anchor}"
 
-    # Scan code lines, including calls after a semicolon; ignore comments and
-    # quoted text rather than treating their mention of print as a call.
+    # Scan the whole masked source so whitespace between print and '(' can
+    # span lines. Quoted text and comments cannot introduce a candidate.
     actual = []
-    for line, code in zip(source.splitlines(), code_mask(source).splitlines()):
-        if not re.search(r"\bprint\s*\(", code):
-            continue
+    for match in re.finditer(r"\bprint\s*\(", code_mask(source)):
+        start = source.rfind("\n", 0, match.start()) + 1
+        end = source.find("\n", match.start())
+        line = source[start:end if end != -1 else len(source)]
         call = line.lstrip()
         assert call.startswith("print("), f"{name}: unreviewed console form: {line.strip()}"
         actual.append(call)
@@ -193,7 +194,9 @@ for name, field in (
     must_reject(name, sources[name] + f'\nlet leaked = {field}; print("[PrivacyProbe] \\(leaked)")\n', "aliased identifier sink")
     must_reject(name, sources[name] + f'\nprint("[PrivacyProbe] \\({field})")\n', "new interpolated sink")
     must_reject(name, sources[name] + f'\nprint(\n    "[PrivacyProbe] \\({field})"\n)\n', "multiline sink")
+    must_reject(name, sources[name] + f'\nlet leaked = {field}\nprint\n("[PrivacyProbe] \\(leaked)")\n', "newline-separated aliased sink")
     check(name, sources[name] + '\n// print("example only")\nlet example = "print(\\"not a sink\\")"\n')
+    check(name, sources[name] + '\n// print\n// ("comment only")\nlet example = "print\\n(\\"not a sink\\")"\n')
 
 must_reject("ScreenMonitorService.swift", sources["ScreenMonitorService.swift"] +
             '\nprint("[ScreenMonitor] Auto-applying layout")\n', "duplicated approved sink")
