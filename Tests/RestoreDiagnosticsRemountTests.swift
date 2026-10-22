@@ -22,7 +22,7 @@ struct RestoreDiagnosticsRemountTests {
         // Two new view value identities consume the same retained WindowService.
         func mount() -> RestoreDiagnosticsView {
             let result = service.lastRestoreResult!
-            return RestoreDiagnosticsView(result: result,
+            return RestoreDiagnosticsView(result: result, revision: service.restoreResultRevision,
                 isExpanded: service.restoreDiagnosticsExpanded,
                 onToggle: {
                     if service.restoreDiagnosticsExpanded {
@@ -62,9 +62,11 @@ struct RestoreDiagnosticsRemountTests {
                 WindowRestoreResult(appName: "SentinelPrivateApp", windowTitle: "SentinelPrivateWindow", status: .windowSkipped)
             ])
         }
-        func copyView(_ result: RestoreResult) -> RestoreDiagnosticsView {
-            RestoreDiagnosticsView(result: result, isExpanded: true, onToggle: {}, onRetry: {},
-                copyActions: RestoreDiagnosticsCopyActions(write: clipboard.write))
+        func copyView(_ result: RestoreResult, revision: Int = 1,
+                      actions: RestoreDiagnosticsCopyActions? = nil) -> RestoreDiagnosticsView {
+            RestoreDiagnosticsView(result: result, revision: revision, isExpanded: true,
+                onToggle: {}, onRetry: {},
+                copyActions: actions ?? RestoreDiagnosticsCopyActions(write: clipboard.write))
         }
         let firstCopy = copyView(privateResult("SentinelPrivateLayout"))
         precondition(firstCopy.copySummary() && clipboard.writes.count == 1)
@@ -89,7 +91,7 @@ struct RestoreDiagnosticsRemountTests {
         firstCopy.requestDetailedCopy()
         precondition(!copyView(privateResult("SentinelNewLayout")).confirmDetailedCopy() &&
             clipboard.writes.count == 2, "new result or remount has no inherited consent")
-        precondition(!firstCopy.copyActions.confirm(for: privateResult("SentinelNewLayout")) &&
+        precondition(!firstCopy.copyActions.confirm(for: privateResult("SentinelNewLayout"), revision: 1) &&
             clipboard.writes.count == 2, "changed result cannot consume old confirmation")
         precondition(!firstCopy.confirmDetailedCopy(), "changed-result attempt consumes old consent")
         clipboard.accepts = false
@@ -97,6 +99,29 @@ struct RestoreDiagnosticsRemountTests {
         firstCopy.requestDetailedCopy()
         precondition(!firstCopy.confirmDetailedCopy() && clipboard.writes.count == 2, "failed detailed sink is not success")
         precondition(!firstCopy.confirmDetailedCopy(), "failed confirm is consumed")
-        print("RestoreDiagnosticsRemountTests: 22 checks passed")
+        clipboard.accepts = true
+        let retained = RestoreDiagnosticsCopyActions(write: clipboard.write)
+        let sameTextA = privateResult("SentinelPrivateLayout")
+        let differentLayout = RestoreResult(layoutID: UUID(), layoutName: sameTextA.layoutName,
+            windowsResults: [WindowRestoreResult(appName: "SentinelPrivateApp",
+                windowTitle: "SentinelPrivateWindow", status: .windowSkipped)])
+        precondition(sameTextA.windowsResults[0].id != differentLayout.windowsResults[0].id)
+        precondition(RestoreResultMapping.redactedDiagnostics(for: sameTextA, includeWindowDetails: true) ==
+            RestoreResultMapping.redactedDiagnostics(for: differentLayout, includeWindowDetails: true))
+        let oldView = copyView(sameTextA, revision: 41, actions: retained)
+        oldView.requestDetailedCopy()
+        let nextView = copyView(differentLayout, revision: 42, actions: retained)
+        precondition(!nextView.confirmDetailedCopy() && clipboard.writes.count == 2,
+            "same text but different layout and revision cannot inherit consent")
+        nextView.requestDetailedCopy()
+        precondition(nextView.confirmDetailedCopy() && clipboard.writes.count == 3,
+            "fresh consent on new revision works")
+        let sameLayoutNext = copyView(differentLayout, revision: 43, actions: retained)
+        nextView.requestDetailedCopy()
+        precondition(!sameLayoutNext.confirmDetailedCopy() && clipboard.writes.count == 3,
+            "same layout and text on new revision cannot inherit consent")
+        sameLayoutNext.requestDetailedCopy()
+        precondition(sameLayoutNext.confirmDetailedCopy() && clipboard.writes.count == 4)
+        print("RestoreDiagnosticsRemountTests: 28 checks passed")
     }
 }

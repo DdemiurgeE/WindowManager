@@ -73,7 +73,7 @@ struct LayoutListView: View {
             }
             if let result = windowService.lastRestoreResult,
                layoutStorage.layouts.contains(where: { $0.id == result.layoutID }) {
-                RestoreDiagnosticsView(result: result,
+                RestoreDiagnosticsView(result: result, revision: windowService.restoreResultRevision,
                     isExpanded: windowService.restoreDiagnosticsExpanded,
                     onToggle: {
                         if windowService.restoreDiagnosticsExpanded {
@@ -83,6 +83,7 @@ struct LayoutListView: View {
                         }
                     },
                     onRetry: { retryLayout(result.layoutID) })
+                    .id(windowService.restoreResultRevision)
                     .padding(.horizontal)
                     .padding(.bottom, 8)
             }
@@ -233,7 +234,7 @@ struct LayoutListView: View {
 /// A confirmation belongs to one request and one result; it is never persisted.
 @MainActor final class RestoreDiagnosticsCopyActions: ObservableObject {
     private let write: (String) -> Bool
-    private var pendingDetails: String?
+    private var pendingDetails: (revision: Int, text: String)?
 
     init(write: @escaping (String) -> Bool) {
         self.write = write
@@ -245,17 +246,19 @@ struct LayoutListView: View {
         write(RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: false))
     }
 
-    func request(for result: RestoreResult) {
-        pendingDetails = RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: true)
+    func request(for result: RestoreResult, revision: Int) {
+        pendingDetails = (revision,
+            RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: true))
     }
 
     func cancel() { pendingDetails = nil }
 
-    func confirm(for result: RestoreResult) -> Bool {
+    func confirm(for result: RestoreResult, revision: Int) -> Bool {
         guard let pendingDetails else { return false }
         self.pendingDetails = nil
+        guard pendingDetails.revision == revision else { return false }
         let currentDetails = RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: true)
-        guard currentDetails == pendingDetails else { return false }
+        guard currentDetails == pendingDetails.text else { return false }
         return write(currentDetails)
     }
 
@@ -268,23 +271,25 @@ struct LayoutListView: View {
 
 @MainActor struct RestoreDiagnosticsView: View {
     let result: RestoreResult
+    let revision: Int
     let isExpanded: Bool
     let onToggle: () -> Void
     let onRetry: () -> Void
     @StateObject var copyActions: RestoreDiagnosticsCopyActions
-    @State private var showingCopyConfirmation = false
-    @State private var showingCopyFailure = false
+    private enum CopyAlert { case confirmation, failure }
+    @State private var copyAlert: CopyAlert?
     @State private var showNamesOnScreen = false
 
-    init(result: RestoreResult, isExpanded: Bool, onToggle: @escaping () -> Void,
+    init(result: RestoreResult, revision: Int, isExpanded: Bool, onToggle: @escaping () -> Void,
          onRetry: @escaping () -> Void) {
-        self.init(result: result, isExpanded: isExpanded, onToggle: onToggle,
+        self.init(result: result, revision: revision, isExpanded: isExpanded, onToggle: onToggle,
                   onRetry: onRetry, copyActions: RestoreDiagnosticsCopyActions())
     }
 
-    init(result: RestoreResult, isExpanded: Bool, onToggle: @escaping () -> Void,
+    init(result: RestoreResult, revision: Int, isExpanded: Bool, onToggle: @escaping () -> Void,
          onRetry: @escaping () -> Void, copyActions: RestoreDiagnosticsCopyActions) {
         self.result = result
+        self.revision = revision
         self.isExpanded = isExpanded
         self.onToggle = onToggle
         self.onRetry = onRetry
@@ -292,9 +297,9 @@ struct LayoutListView: View {
     }
 
     func copySummary() -> Bool { copyActions.copySummary(for: result) }
-    func requestDetailedCopy() { copyActions.request(for: result) }
+    func requestDetailedCopy() { copyActions.request(for: result, revision: revision) }
     func cancelDetailedCopy() { copyActions.cancel() }
-    func confirmDetailedCopy() -> Bool { copyActions.confirm(for: result) }
+    func confirmDetailedCopy() -> Bool { copyActions.confirm(for: result, revision: revision) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -314,11 +319,11 @@ struct LayoutListView: View {
                     .font(.caption)
                 HStack {
                     Button("Copy summary") {
-                        if !copySummary() { showingCopyFailure = true }
+                        if !copySummary() { copyAlert = .failure }
                     }
                     Button("Copy with names…") {
                         requestDetailedCopy()
-                        showingCopyConfirmation = true
+                        copyAlert = .confirmation
                     }
                     .help("Requires confirmation each time; includes layout, app and window names")
                 }
@@ -349,19 +354,36 @@ struct LayoutListView: View {
         .padding(10)
         .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(8)
-        .alert("Copy diagnostics with names?", isPresented: $showingCopyConfirmation) {
-            Button("Cancel", role: .cancel) { cancelDetailedCopy() }
-                .keyboardShortcut(.defaultAction)
-            Button("Copy with names") {
-                if !confirmDetailedCopy() { showingCopyFailure = true }
+        .alert(copyAlert == .confirmation ? "Copy diagnostics with names?" : "Copy failed",
+               isPresented: Binding(
+                get: { copyAlert != nil },
+                set: { presented in
+                    if !presented {
+                        cancelDetailedCopy()
+                        copyAlert = nil
+                    }
+                })) {
+            if copyAlert == .confirmation {
+                Button("Cancel", role: .cancel) { cancelDetailedCopy() }
+                    .keyboardShortcut(.defaultAction)
+                Button("Copy with names") {
+                    if !confirmDetailedCopy() {
+                        // Present after the confirmation has finished dismissing.
+                        DispatchQueue.main.async { copyAlert = .failure }
+                    }
+                }
+            } else {
+                Button("OK", role: .cancel) {}
             }
         } message: {
-            Text("This copies layout, app and window names. They remain on the system clipboard until replaced. Confirm each time you copy with names.")
+            Text(copyAlert == .confirmation
+                ? "This copies layout, app and window names. They remain on the system clipboard until replaced. Confirm each time you copy with names."
+                : "Diagnostics could not be copied. Clipboard contents may have changed; try again.")
         }
-        .alert("Copy failed", isPresented: $showingCopyFailure) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Diagnostics could not be copied. Clipboard contents may have changed; try again.")
+        .onChange(of: revision) { _, _ in
+            cancelDetailedCopy()
+            copyAlert = nil
+            showNamesOnScreen = false
         }
     }
 }
