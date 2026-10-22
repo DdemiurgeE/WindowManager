@@ -28,16 +28,17 @@ cleanup_xattrs() {
   xattr -cr "$1" 2>/dev/null || true
 }
 
+SIGN_ERROR_LOG="${TMPDIR:-$ROOT_DIR}/windowmanager-codesign-err.log"
 signed=false
 for attempt in 1 2 3 4 5; do
   cleanup_xattrs "$CLEAN_APP"
-  if codesign --force --deep --sign - "$CLEAN_APP" >/dev/null 2>/tmp/windowmanager-codesign-err.log; then
+  if codesign --force --deep --sign - "$CLEAN_APP" >/dev/null 2>"$SIGN_ERROR_LOG"; then
     signed=true
     break
   fi
   printf 'codesign attempt %s failed, retrying\n' "$attempt" >&2
 done
-[[ "$signed" == true ]] || { cat /tmp/windowmanager-codesign-err.log >&2; exit 1; }
+[[ "$signed" == true ]] || { cat "$SIGN_ERROR_LOG" >&2; exit 1; }
 cleanup_xattrs "$CLEAN_APP"
 codesign --verify --deep --verbose=2 "$CLEAN_APP"
 
