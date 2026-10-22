@@ -1,6 +1,6 @@
 # WindowManager release model
 
-## v3.0 — per-copy diagnostics consent and console privacy (candidate)
+## v3.0 — per-copy diagnostics consent and console privacy (released; live acceptance pending)
 
 **Copy with names…** now requires confirmation on every action; old persisted
 consent is ignored. Confirmation is bound to the specific restore-result revision,
@@ -9,12 +9,14 @@ separately from a clipboard-write failure. Capture and restore console messages
 avoid window/layout identifiers, including aliased and multiline output sinks.
 Version `MARKETING_VERSION=3.0`, build `CURRENT_PROJECT_VERSION=8`.
 
-The source passed independent synthetic/static QA and review and was merged in
-PR #13; this version/build candidate still needs its own signed package, hosted
-CI, published assets and verified Sparkle feed. No live SwiftUI alert/AX, real
-clipboard, real windows/displays or user settings were exercised: the ordering
-of alert dismissal and delayed error presentation remains unverified, not a
-proven fix. Do not describe the synthetic checks as live acceptance.
+The privacy source passed independent synthetic/static QA and review in PR #13;
+version/build 3.0 (8) passed its own gates in PR #14 and was published from
+`v3.0`. The downloaded release ZIP, DMG and checksums were verified; the
+Sparkle entry signs the exact downloaded ZIP. Public feed propagation is a
+separate gate. No live SwiftUI alert/AX, real clipboard, real windows/displays
+or user settings were exercised: the ordering of alert dismissal and delayed
+error presentation remains unverified, not a proven fix. Do not describe the
+synthetic checks as live acceptance.
 
 ## v2.9 — restore diagnostics and retry (released; live acceptance pending)
 
