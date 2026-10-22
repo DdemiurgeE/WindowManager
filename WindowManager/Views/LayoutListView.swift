@@ -8,6 +8,7 @@
 
 import SwiftUI
 import AppKit
+import Combine
 import UniformTypeIdentifiers
 
 struct LayoutListView: View {
@@ -26,7 +27,6 @@ struct LayoutListView: View {
     @State private var showingImportConfirmation = false
     @State private var showingImportResult = false
     @State private var importResult = ""
-    @AppStorage("includeDetailedRestoreDiagnostics") private var includeDetailedDiagnostics = false
     
     var body: some View {
         VStack {
@@ -75,7 +75,6 @@ struct LayoutListView: View {
                layoutStorage.layouts.contains(where: { $0.id == result.layoutID }) {
                 RestoreDiagnosticsView(result: result,
                     isExpanded: windowService.restoreDiagnosticsExpanded,
-                    includeDetails: $includeDetailedDiagnostics,
                     onToggle: {
                         if windowService.restoreDiagnosticsExpanded {
                             windowService.hideRestoreDiagnostics()
@@ -231,12 +230,71 @@ struct LayoutListView: View {
     }
 }
 
-struct RestoreDiagnosticsView: View {
+/// A confirmation belongs to one request and one result; it is never persisted.
+@MainActor final class RestoreDiagnosticsCopyActions: ObservableObject {
+    private let write: (String) -> Bool
+    private var pendingDetails: String?
+
+    init(write: @escaping (String) -> Bool) {
+        self.write = write
+    }
+
+    convenience init() { self.init(write: Self.writeToPasteboard) }
+
+    func copySummary(for result: RestoreResult) -> Bool {
+        write(RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: false))
+    }
+
+    func request(for result: RestoreResult) {
+        pendingDetails = RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: true)
+    }
+
+    func cancel() { pendingDetails = nil }
+
+    func confirm(for result: RestoreResult) -> Bool {
+        guard let pendingDetails else { return false }
+        self.pendingDetails = nil
+        let currentDetails = RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: true)
+        guard currentDetails == pendingDetails else { return false }
+        return write(currentDetails)
+    }
+
+    private static func writeToPasteboard(_ text: String) -> Bool {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        return pasteboard.setString(text, forType: .string)
+    }
+}
+
+@MainActor struct RestoreDiagnosticsView: View {
     let result: RestoreResult
     let isExpanded: Bool
-    @Binding var includeDetails: Bool
     let onToggle: () -> Void
     let onRetry: () -> Void
+    @StateObject var copyActions: RestoreDiagnosticsCopyActions
+    @State private var showingCopyConfirmation = false
+    @State private var showingCopyFailure = false
+    @State private var showNamesOnScreen = false
+
+    init(result: RestoreResult, isExpanded: Bool, onToggle: @escaping () -> Void,
+         onRetry: @escaping () -> Void) {
+        self.init(result: result, isExpanded: isExpanded, onToggle: onToggle,
+                  onRetry: onRetry, copyActions: RestoreDiagnosticsCopyActions())
+    }
+
+    init(result: RestoreResult, isExpanded: Bool, onToggle: @escaping () -> Void,
+         onRetry: @escaping () -> Void, copyActions: RestoreDiagnosticsCopyActions) {
+        self.result = result
+        self.isExpanded = isExpanded
+        self.onToggle = onToggle
+        self.onRetry = onRetry
+        _copyActions = StateObject(wrappedValue: copyActions)
+    }
+
+    func copySummary() -> Bool { copyActions.copySummary(for: result) }
+    func requestDetailedCopy() { copyActions.request(for: result) }
+    func cancelDetailedCopy() { copyActions.cancel() }
+    func confirmDetailedCopy() -> Bool { copyActions.confirm(for: result) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -252,17 +310,19 @@ struct RestoreDiagnosticsView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
             if isExpanded {
+                Toggle("Show app and window names on screen (does not affect copied diagnostics)", isOn: $showNamesOnScreen)
+                    .font(.caption)
                 HStack {
-                    Toggle("Include layout, app and window names in copied details (explicit consent)", isOn: $includeDetails)
-                        .font(.caption)
-                    Button("Copy diagnostics") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(
-                            RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: includeDetails),
-                            forType: .string)
+                    Button("Copy summary") {
+                        if !copySummary() { showingCopyFailure = true }
                     }
-                    .buttonStyle(.borderless)
+                    Button("Copy with names…") {
+                        requestDetailedCopy()
+                        showingCopyConfirmation = true
+                    }
+                    .help("Requires confirmation each time; includes layout, app and window names")
                 }
+                .buttonStyle(.borderless)
                 HStack {
                     Text(RestoreResult.lastUsedPolicyDescription)
                         .font(.caption2)
@@ -271,7 +331,7 @@ struct RestoreDiagnosticsView: View {
                     Button("Retry only missing / failed", action: onRetry)
                         .disabled(RestoreResultMapping.retryableIDs(in: result.windowsResults).isEmpty)
                 }
-                if includeDetails {
+                if showNamesOnScreen {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 4) {
                             ForEach(result.windowsResults) { item in
@@ -289,6 +349,20 @@ struct RestoreDiagnosticsView: View {
         .padding(10)
         .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(8)
+        .alert("Copy diagnostics with names?", isPresented: $showingCopyConfirmation) {
+            Button("Cancel", role: .cancel) { cancelDetailedCopy() }
+                .keyboardShortcut(.defaultAction)
+            Button("Copy with names") {
+                if !confirmDetailedCopy() { showingCopyFailure = true }
+            }
+        } message: {
+            Text("This copies layout, app and window names. They remain on the system clipboard until replaced. Confirm each time you copy with names.")
+        }
+        .alert("Copy failed", isPresented: $showingCopyFailure) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Diagnostics could not be copied. Clipboard contents may have changed; try again.")
+        }
     }
 }
 
