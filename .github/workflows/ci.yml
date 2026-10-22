@@ -41,7 +41,9 @@ jobs:
           scripts/run-fake-ax-tests.sh
           scripts/run-restore-planner-tests.sh
           scripts/run-restore-preview-tests.sh
+          scripts/run-restore-plan-result-mapping-tests.sh
           scripts/run-restore-result-mapping-tests.sh
+          scripts/run-restore-diagnostics-tests.sh
           scripts/run-screen-resolver-tests.sh
           scripts/run-window-assignment-tests.sh
           scripts/run-legacy-json-fixture-test.sh
