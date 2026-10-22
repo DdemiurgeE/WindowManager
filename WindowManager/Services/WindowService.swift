@@ -274,7 +274,7 @@ class WindowService: ObservableObject {
             }
             let title = (try? axTitle(element)) ?? item.windowTitle
             return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: title,
-                status: setWindowFrame(element, frame: frame, debugName: "\(item.appName) — \(title)"))
+                status: setWindowFrame(element, frame: frame))
         }
         let result = RestoreResult(layoutID: layout.id, layoutName: layout.name, windowsResults: results)
         if let previous = lastRestoreResult, previous.layoutID == layout.id, windowIDs != nil {
@@ -417,14 +417,14 @@ class WindowService: ObservableObject {
             savedScale: windowInfo.savedScale
         )
         guard let resolved = ScreenResolver().resolve(window: snapshot, displays: displays) else {
-            print("[WindowRestore] Window '\(windowInfo.appName)' has no available display; using saved frame")
+            print("[WindowRestore] No available display; using saved frame")
             return windowInfo.frame
         }
-        print("[WindowRestore] Window '\(windowInfo.appName)' selected display index \(resolved.display.index) via \(resolved.selection)")
+        print("[WindowRestore] Selected display index \(resolved.display.index) via \(resolved.selection)")
         return resolved.frame
     }
     
-    private func setWindowFrame(_ windowElement: AnyObject, frame: CGRect, debugName: String = "") -> WindowRestoreResult.WindowRestoreStatus {
+    private func setWindowFrame(_ windowElement: AnyObject, frame: CGRect) -> WindowRestoreResult.WindowRestoreStatus {
         guard let coordinateConverter else { return .coordinateUnavailable }
         let expectedPosition = coordinateConverter.screenFrameToAXOrigin(frame)
         let expectedSize = frame.size
@@ -453,7 +453,14 @@ class WindowService: ObservableObject {
                 }
                 return .success(WindowFrameReadback(position: position, size: size))
             },
-            onError: { print("[\(debugName)] \($0)") }
+            onError: { message in
+                // Engine errors are strings; only known AX reason/code shapes may reach the console.
+                let pattern = #"^(position|size) (set|read) AXError -?[0-9]+$"#
+                let isKnownReason = message.range(of: pattern, options: .regularExpression) != nil ||
+                    message == "position read failed" || message == "size read failed"
+                let reason = isKnownReason ? message : "AX frame operation failed"
+                print("[WindowRestore] \(reason)")
+            }
         )
         switch outcome {
         case .exact: return .positionSet

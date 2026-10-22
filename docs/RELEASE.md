@@ -9,8 +9,11 @@ windows and unavailable display coordinates. An unavailable-only result is visib
 in both compact and copied counts and remains eligible for retry; these counts
 are selected outcomes, not an exhaustive partition of all statuses.
 
-Copied diagnostics omit layout, application and window names by default. Explicit
-opt-in includes those names; capture/offscreen-skip console messages no longer
+Copied diagnostics omit layout, application and window names by default. The
+published v2.9 build used a persistent opt-in for named copies; a later local-only
+consent fix (not part of that published build) requires confirmation for every
+"Copy with names…" action and ignores the old stored consent. Names remain on the
+clipboard until replaced. Capture/offscreen-skip console messages no longer
 interpolate window titles. Version `MARKETING_VERSION=2.9` and
 `CURRENT_PROJECT_VERSION=7` was published from tag `v2.9` after independent
 synthetic QA, review, and hosted CI. The release ZIP, DMG, checksums, and signed

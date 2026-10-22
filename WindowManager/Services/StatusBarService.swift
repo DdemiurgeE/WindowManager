@@ -95,7 +95,7 @@ class StatusBarService: NSObject, NSMenuDelegate {
             return
         }
         
-        print("StatusBarService: Applying layout '\(layout.name)'")
+        print("StatusBarService: Applying layout")
         windowService?.restoreLayout(layout)
         try? layoutStorage?.markLayoutAsUsed(layout)
     }

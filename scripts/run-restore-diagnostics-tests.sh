@@ -19,3 +19,10 @@ xcrun --sdk macosx swiftc "${sources[@]}" \
   "$ROOT/Tests/RestoreDiagnosticsRemountTests.swift" \
   -o "$BUILD_DIR/RestoreDiagnosticsRemountTests"
 "$BUILD_DIR/RestoreDiagnosticsRemountTests"
+
+# Source-level guard: no persisted legacy consent may feed a clipboard action.
+if grep -qE 'includeDetailedRestoreDiagnostics|@AppStorage' "$ROOT/WindowManager/Views/LayoutListView.swift"; then
+  echo 'Restore diagnostics must not read legacy persisted consent' >&2
+  exit 1
+fi
+echo 'Legacy persisted consent source guard: passed'
