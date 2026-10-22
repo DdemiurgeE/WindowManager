@@ -232,6 +232,18 @@ struct LayoutListView: View {
 }
 
 /// A confirmation belongs to one request and one result; it is never persisted.
+enum RestoreDiagnosticsCopyOutcome: Equatable {
+    case success, staleRequest, writeFailed
+
+    var message: String {
+        switch self {
+        case .success: return ""
+        case .staleRequest: return "Diagnostics changed or confirmation expired. No copy was attempted; request a new copy."
+        case .writeFailed: return "Diagnostics could not be copied. Clipboard contents may have changed; try again."
+        }
+    }
+}
+
 @MainActor final class RestoreDiagnosticsCopyActions: ObservableObject {
     private let write: (String) -> Bool
     private var pendingDetails: (revision: Int, text: String)?
@@ -253,13 +265,13 @@ struct LayoutListView: View {
 
     func cancel() { pendingDetails = nil }
 
-    func confirm(for result: RestoreResult, revision: Int) -> Bool {
-        guard let pendingDetails else { return false }
+    func confirm(for result: RestoreResult, revision: Int) -> RestoreDiagnosticsCopyOutcome {
+        guard let pendingDetails else { return .staleRequest }
         self.pendingDetails = nil
-        guard pendingDetails.revision == revision else { return false }
+        guard pendingDetails.revision == revision else { return .staleRequest }
         let currentDetails = RestoreResultMapping.redactedDiagnostics(for: result, includeWindowDetails: true)
-        guard currentDetails == pendingDetails.text else { return false }
-        return write(currentDetails)
+        guard currentDetails == pendingDetails.text else { return .staleRequest }
+        return write(currentDetails) ? .success : .writeFailed
     }
 
     private static func writeToPasteboard(_ text: String) -> Bool {
@@ -276,7 +288,7 @@ struct LayoutListView: View {
     let onToggle: () -> Void
     let onRetry: () -> Void
     @StateObject var copyActions: RestoreDiagnosticsCopyActions
-    private enum CopyAlert { case confirmation, failure }
+    private enum CopyAlert { case confirmation, staleRequest, failure }
     @State private var copyAlert: CopyAlert?
     @State private var showNamesOnScreen = false
 
@@ -299,7 +311,7 @@ struct LayoutListView: View {
     func copySummary() -> Bool { copyActions.copySummary(for: result) }
     func requestDetailedCopy() { copyActions.request(for: result, revision: revision) }
     func cancelDetailedCopy() { copyActions.cancel() }
-    func confirmDetailedCopy() -> Bool { copyActions.confirm(for: result, revision: revision) }
+    func confirmDetailedCopy() -> RestoreDiagnosticsCopyOutcome { copyActions.confirm(for: result, revision: revision) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -354,7 +366,8 @@ struct LayoutListView: View {
         .padding(10)
         .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(8)
-        .alert(copyAlert == .confirmation ? "Copy diagnostics with names?" : "Copy failed",
+        .alert(copyAlert == .confirmation ? "Copy diagnostics with names?" :
+               copyAlert == .staleRequest ? "Copy request expired" : "Copy failed",
                isPresented: Binding(
                 get: { copyAlert != nil },
                 set: { presented in
@@ -367,9 +380,12 @@ struct LayoutListView: View {
                 Button("Cancel", role: .cancel) { cancelDetailedCopy() }
                     .keyboardShortcut(.defaultAction)
                 Button("Copy with names") {
-                    if !confirmDetailedCopy() {
+                    let outcome = confirmDetailedCopy()
+                    if outcome != .success {
                         // Present after the confirmation has finished dismissing.
-                        DispatchQueue.main.async { copyAlert = .failure }
+                        DispatchQueue.main.async {
+                            copyAlert = outcome == .staleRequest ? .staleRequest : .failure
+                        }
                     }
                 }
             } else {
@@ -378,7 +394,9 @@ struct LayoutListView: View {
         } message: {
             Text(copyAlert == .confirmation
                 ? "This copies layout, app and window names. They remain on the system clipboard until replaced. Confirm each time you copy with names."
-                : "Diagnostics could not be copied. Clipboard contents may have changed; try again.")
+                : copyAlert == .staleRequest
+                    ? RestoreDiagnosticsCopyOutcome.staleRequest.message
+                    : RestoreDiagnosticsCopyOutcome.writeFailed.message)
         }
         .onChange(of: revision) { _, _ in
             cancelDetailedCopy()

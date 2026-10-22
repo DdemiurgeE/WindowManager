@@ -76,29 +76,37 @@ struct RestoreDiagnosticsRemountTests {
         firstCopy.requestDetailedCopy()
         precondition(clipboard.writes.count == 1, "request alone never writes")
         firstCopy.cancelDetailedCopy()
-        precondition(!firstCopy.confirmDetailedCopy() && clipboard.writes.count == 1, "cancel invalidates confirm")
+        precondition(firstCopy.confirmDetailedCopy() == .staleRequest && clipboard.writes.count == 1,
+            "cancel invalidates confirm without writing")
         firstCopy.requestDetailedCopy()
-        precondition(firstCopy.confirmDetailedCopy() && clipboard.writes.count == 2)
+        precondition(firstCopy.confirmDetailedCopy() == .success && clipboard.writes.count == 2)
         precondition(clipboard.writes[1].contains("SentinelPrivateLayout") &&
             clipboard.writes[1].contains("SentinelPrivateApp") &&
             clipboard.writes[1].contains("SentinelPrivateWindow"), "explicit confirmation writes names once")
-        precondition(!firstCopy.confirmDetailedCopy() && clipboard.writes.count == 2, "confirmation consumed")
-        precondition(!copyView(privateResult("SentinelPrivateLayout")).confirmDetailedCopy() &&
+        precondition(firstCopy.confirmDetailedCopy() == .staleRequest && clipboard.writes.count == 2,
+            "confirmation consumed")
+        precondition(copyView(privateResult("SentinelPrivateLayout")).confirmDetailedCopy() == .staleRequest &&
             clipboard.writes.count == 2, "relaunch-like fresh owner has no remembered consent")
         firstCopy.requestDetailedCopy()
         precondition(clipboard.writes.count == 2, "second named copy also needs confirmation")
         firstCopy.cancelDetailedCopy()
         firstCopy.requestDetailedCopy()
-        precondition(!copyView(privateResult("SentinelNewLayout")).confirmDetailedCopy() &&
+        precondition(copyView(privateResult("SentinelNewLayout")).confirmDetailedCopy() == .staleRequest &&
             clipboard.writes.count == 2, "new result or remount has no inherited consent")
-        precondition(!firstCopy.copyActions.confirm(for: privateResult("SentinelNewLayout"), revision: 1) &&
+        precondition(firstCopy.copyActions.confirm(for: privateResult("SentinelNewLayout"), revision: 1) == .staleRequest &&
             clipboard.writes.count == 2, "changed result cannot consume old confirmation")
-        precondition(!firstCopy.confirmDetailedCopy(), "changed-result attempt consumes old consent")
+        precondition(firstCopy.confirmDetailedCopy() == .staleRequest, "changed-result attempt consumes old consent")
         clipboard.accepts = false
         precondition(!firstCopy.copySummary() && clipboard.writes.count == 2, "failed sink is not success")
         firstCopy.requestDetailedCopy()
-        precondition(!firstCopy.confirmDetailedCopy() && clipboard.writes.count == 2, "failed detailed sink is not success")
-        precondition(!firstCopy.confirmDetailedCopy(), "failed confirm is consumed")
+        precondition(firstCopy.confirmDetailedCopy() == .writeFailed && clipboard.writes.count == 2,
+            "failed detailed sink is not success")
+        precondition(firstCopy.confirmDetailedCopy() == .staleRequest, "failed confirm is consumed")
+        precondition(RestoreDiagnosticsCopyOutcome.staleRequest.message.contains("No copy was attempted") &&
+            !RestoreDiagnosticsCopyOutcome.staleRequest.message.contains("Clipboard contents may have changed"),
+            "stale alert must not claim a clipboard attempt")
+        precondition(RestoreDiagnosticsCopyOutcome.writeFailed.message.contains("Clipboard contents may have changed"),
+            "write-failure alert describes a clipboard attempt")
         clipboard.accepts = true
         let retained = RestoreDiagnosticsCopyActions(write: clipboard.write)
         let sameTextA = privateResult("SentinelPrivateLayout")
@@ -111,17 +119,23 @@ struct RestoreDiagnosticsRemountTests {
         let oldView = copyView(sameTextA, revision: 41, actions: retained)
         oldView.requestDetailedCopy()
         let nextView = copyView(differentLayout, revision: 42, actions: retained)
-        precondition(!nextView.confirmDetailedCopy() && clipboard.writes.count == 2,
+        precondition(nextView.confirmDetailedCopy() == .staleRequest && clipboard.writes.count == 2,
             "same text but different layout and revision cannot inherit consent")
         nextView.requestDetailedCopy()
-        precondition(nextView.confirmDetailedCopy() && clipboard.writes.count == 3,
+        precondition(nextView.confirmDetailedCopy() == .success && clipboard.writes.count == 3,
             "fresh consent on new revision works")
         let sameLayoutNext = copyView(differentLayout, revision: 43, actions: retained)
         nextView.requestDetailedCopy()
-        precondition(!sameLayoutNext.confirmDetailedCopy() && clipboard.writes.count == 3,
+        precondition(sameLayoutNext.confirmDetailedCopy() == .staleRequest && clipboard.writes.count == 3,
             "same layout and text on new revision cannot inherit consent")
         sameLayoutNext.requestDetailedCopy()
-        precondition(sameLayoutNext.confirmDetailedCopy() && clipboard.writes.count == 4)
-        print("RestoreDiagnosticsRemountTests: 28 checks passed")
+        precondition(sameLayoutNext.confirmDetailedCopy() == .success && clipboard.writes.count == 4)
+        retained.request(for: differentLayout, revision: 43)
+        precondition(retained.confirm(for: differentLayout, revision: 44) == .staleRequest &&
+            clipboard.writes.count == 4, "revision mismatch never writes")
+        retained.request(for: differentLayout, revision: 44)
+        precondition(retained.confirm(for: differentLayout, revision: 44) == .success &&
+            clipboard.writes.count == 5, "fresh confirmation writes exactly once")
+        print("RestoreDiagnosticsRemountTests: 32 checks passed")
     }
 }
