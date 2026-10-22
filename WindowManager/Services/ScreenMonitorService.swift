@@ -58,7 +58,7 @@ class ScreenMonitorService: ObservableObject {
     
     private func handleScreenConfigurationChange() {
         print("[ScreenMonitor] Screen configuration change event received")
-        cancelPendingRestore(reason: "new screen configuration event")
+        cancelPendingRestore()
         
         let newConfiguration = getCurrentScreenConfiguration()
         
@@ -68,8 +68,8 @@ class ScreenMonitorService: ObservableObject {
             return
         }
         
-        print("[ScreenMonitor] Old configuration: \(currentScreenConfiguration?.screenIDs ?? [])")
-        print("[ScreenMonitor] New configuration: \(newConfiguration.screenIDs)")
+        print("[ScreenMonitor] Old display count: \(currentScreenConfiguration?.screenIDs.count ?? 0)")
+        print("[ScreenMonitor] New display count: \(newConfiguration.screenIDs.count)")
         
         currentScreenConfiguration = newConfiguration
         
@@ -172,7 +172,7 @@ class ScreenMonitorService: ObservableObject {
         )
         let elapsed = Date().timeIntervalSince(startedAt)
 
-        print("[ScreenMonitor] Stability check: ids=\(latestConfiguration.screenIDs), stableReadings=\(nextStableReadings)/\(requiredStableScreenReadings), elapsed=\(String(format: "%.2f", elapsed))s")
+        print("[ScreenMonitor] Stability check: displays=\(latestConfiguration.screenIDs.count), stableReadings=\(nextStableReadings)/\(requiredStableScreenReadings), elapsed=\(String(format: "%.2f", elapsed))s")
 
         if nextStableReadings >= requiredStableScreenReadings {
             print("[ScreenMonitor] Stable screen configuration reached")
@@ -226,7 +226,7 @@ class ScreenMonitorService: ObservableObject {
         // Применяем самый свежий layout
         if let layoutToApply = sortedLayouts.first {
             guard layoutStorage.eligibleForAutoApply(layoutToApply.id) else { return }
-            print("[ScreenMonitor] Auto-applying layout: \(layoutToApply.name)")
+            print("[ScreenMonitor] Auto-applying layout")
             appendRestoreEvent(RestoreEvent(
                 layoutName: layoutToApply.name,
                 screenConfiguration: currentConfig,
@@ -239,7 +239,7 @@ class ScreenMonitorService: ObservableObject {
             retryWorkItem = nil
             let restoreResult = windowService.restoreLayout(layoutToApply)
             try? layoutStorage.markLayoutAsUsed(layoutToApply)
-            print("[ScreenMonitor] Restore finished: \(restoreResult.summaryDescription)")
+            print("[ScreenMonitor] Restore finished: \(restoreResult.windowsRestored)/\(restoreResult.windowsTotal) windows restored")
             appendRestoreEvent(RestoreEvent(
                 layoutName: layoutToApply.name,
                 screenConfiguration: currentConfig,
@@ -320,7 +320,7 @@ class ScreenMonitorService: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: workItem)
     }
 
-    private func cancelPendingRestore(reason: String) {
+    private func cancelPendingRestore() {
         pendingRestoreWorkItem?.cancel()
         self.pendingRestoreID = nil
         self.pendingRestoreWorkItem = nil
@@ -330,7 +330,7 @@ class ScreenMonitorService: ObservableObject {
         autoApplyRetryPolicy.cancelForTopology()
         pendingNotificationLayoutName = nil
         pendingNotificationStatuses.removeAll()
-        print("[ScreenMonitor] Cancelled pending restore: \(reason)")
+        print("[ScreenMonitor] Cancelled pending restore: new screen configuration event")
         appendRestoreEvent(RestoreEvent(
             layoutName: "",
             screenConfiguration: currentScreenConfiguration,
@@ -370,7 +370,7 @@ class ScreenMonitorService: ObservableObject {
             case .notDetermined:
                 center.requestAuthorization(options: [.alert, .sound]) { granted, error in
                     if let error {
-                        print("Notification authorization error: \(error)")
+                        print("Notification authorization error code: \((error as NSError).code)")
                         return
                     }
 
@@ -407,14 +407,14 @@ class ScreenMonitorService: ObservableObject {
 
         center.add(request) { error in
             if let error {
-                print("Failed to deliver notification: \(error)")
+                print("Failed to deliver notification, error code: \((error as NSError).code)")
             }
         }
     }
 
     func updateCurrentScreenConfiguration() {
         currentScreenConfiguration = getCurrentScreenConfiguration()
-        print("Current screen configuration: \(currentScreenConfiguration?.screenIDs ?? [])")
+        print("Current display count: \(currentScreenConfiguration?.screenIDs.count ?? 0)")
     }
 
     func getRestoreLog() -> [RestoreEvent] {
@@ -426,6 +426,6 @@ class ScreenMonitorService: ObservableObject {
         if restoreLog.count > maxRestoreLogEntries {
             restoreLog.removeFirst()
         }
-        print("[RestoreLog] \(event.timestamp.formatted()) \(event.status.rawValue): \(event.layoutName) (\(event.windowsRestored)/\(event.windowsTotal) windows, config: \(event.screenConfiguration?.screenIDs ?? []))")
+        print("[RestoreLog] \(event.timestamp.formatted()) \(event.status.rawValue): \(event.windowsRestored)/\(event.windowsTotal) windows, displays: \(event.screenConfiguration?.screenIDs.count ?? 0)")
     }
 }

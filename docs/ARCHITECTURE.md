@@ -134,6 +134,8 @@ The final notification is deferred until the initial attempt and all bounded ret
 
 The UI keeps the last `RestoreResult` and an in-memory history capped at 20 results. It shows verified `positionSet` restores separately from skipped/missing windows, AX failures, and application clamps. “Retry only missing / failed” is an explicit bounded manual action keyed by each `WindowRestoreResult.id`; no retry is triggered by merely viewing diagnostics. Copied diagnostics omit app names and window titles by default and include them only after the user enables the detail-consent toggle.
 
+Restore, Auto-apply, menu-bar apply, and restore-event console lines omit layout, application, and window names. They retain display counts/index/selection, event status, restored/total counts, and allowlisted AX operation/reason codes; notification errors print numeric codes rather than arbitrary error descriptions. The in-memory restore results/events and explicitly user-facing menu and notification still contain names; copied diagnostics include them only with the detail-consent toggle. These console guards are static/synthetic and do not establish privacy of third-party or OS logs.
+
 ## Manual and menu-bar flows
 
 `LayoutListView` and `StatusBarService` call the same `WindowService.restoreLayout` path. The status-item menu is rebuilt when opened and includes saved layouts, save-current-layout, the Auto-apply toggle, open-window, and quit. Saving from the menu bar opens the main window and posts `ShowSaveLayoutAlert` for `ContentView`.
