@@ -24,10 +24,15 @@ struct ScreenResolverTests {
         testPresentationStateIsNotShrunk()
         testMissingScreenIDUsesSavedAbsoluteFrameCenter()
         testDuplicateScreenIDFallsBackWithoutGuessingIdentity()
+        testTransientDisplayIDsDoNotSwapExternalMonitors()
+        testPhysicalFingerprintSurvivesTransientIDSwap()
+        testUnavailableOrDuplicateHardwareFingerprintFallsBackToObservation()
+        testMissingPhysicalMonitorDoesNotMoveItsWindowsToAnother()
+        testAutoApplyMatchesPhysicalTopologyWithoutTrustingTransientIDs()
         testNegativeArrangementAndLegacyIndexFallback()
         testEmptyDisplaySetReturnsNil()
         testLegacyJSONWithoutOptionalGeometryStillDecodes()
-        print("ScreenResolverTests: 12 tests passed")
+        print("ScreenResolverTests: 17 tests passed")
     }
 
     private static func testScreenIDSelectsPhysicalDisplayBeforeFrameConversion() {
@@ -124,6 +129,66 @@ struct ScreenResolverTests {
         let result = ScreenResolver().resolve(window: window, displays: [duplicateA, duplicateB])
         assertEqual(result?.display, duplicateB, "duplicate ID geometry fallback")
         assertEqual(result?.selection, .frameCenter, "duplicate ID strategy")
+    }
+
+    private static func testTransientDisplayIDsDoNotSwapExternalMonitors() {
+        let saved = WindowSnapshot(
+            frame: CGRect(x: -1300, y: 150, width: 500, height: 350),
+            relativeFrame: CGRect(x: 0.15, y: 0.15, width: 0.5, height: 0.4),
+            screenID: "screen_21", screenIndex: 1)
+        let leftAfterReconnect = DisplaySnapshot(screenID: "screen_42", frame: CGRect(x: -1600, y: 0, width: 1600, height: 900), index: 1)
+        let rightAfterReconnect = DisplaySnapshot(screenID: "screen_21", frame: CGRect(x: 1920, y: 0, width: 1600, height: 900), index: 2)
+        let result = ScreenResolver().resolve(window: saved, displays: [primary, leftAfterReconnect, rightAfterReconnect])
+        assertEqual(result?.display, leftAfterReconnect, "transient ID must not override saved geometry")
+        assertEqual(result?.selection, .frameCenter, "legacy ID uses saved geometry")
+    }
+
+    private static func testPhysicalFingerprintSurvivesTransientIDSwap() {
+        let leftID = DisplayIdentity.stableID(vendor: 111, model: 22, serial: 333)
+        let rightID = DisplayIdentity.stableID(vendor: 111, model: 22, serial: 444)
+        precondition(leftID != nil && leftID != rightID, "two monitors must have distinct fingerprints")
+        assertEqual(leftID, DisplayIdentity.stableID(vendor: 111, model: 22, serial: 333), "stable across reconnect")
+        assertNil(DisplayIdentity.stableID(vendor: 111, model: 22, serial: 0), "unknown serial is not identity")
+        assertNil(DisplayIdentity.stableID(vendor: 0, model: 22, serial: 333), "unknown vendor is not identity")
+
+        let saved = WindowSnapshot(frame: CGRect(x: -1200, y: 200, width: 400, height: 300),
+            relativeFrame: CGRect(x: 0.2, y: 0.2, width: 0.4, height: 0.3), screenID: leftID, screenIndex: 1)
+        let movedLeft = DisplaySnapshot(screenID: leftID, frame: CGRect(x: 1920, y: 0, width: 1600, height: 900), index: 2)
+        let movedRight = DisplaySnapshot(screenID: rightID, frame: CGRect(x: -1600, y: 0, width: 1600, height: 900), index: 1)
+        let result = ScreenResolver().resolve(window: saved, displays: [primary, movedRight, movedLeft])
+        assertEqual(result?.display, movedLeft, "physical monitor selected after positions swap")
+        assertEqual(result?.selection, .screenID, "physical fingerprint strategy")
+    }
+
+    private static func testUnavailableOrDuplicateHardwareFingerprintFallsBackToObservation() {
+        let ids = DisplayIdentity.resolveIDs(candidates: ["display_same", "display_same", nil, "display_unique"],
+            observations: ["screen_1", "screen_2", "screen_3", "screen_4"])
+        assertEqual(ids, ["screen_1", "screen_2", "screen_3", "display_unique"], "ambiguous hardware identity does not masquerade as unique")
+    }
+
+    private static func testMissingPhysicalMonitorDoesNotMoveItsWindowsToAnother() {
+        let missing = DisplayIdentity.stableID(vendor: 111, model: 22, serial: 333)!
+        let other = DisplayIdentity.stableID(vendor: 111, model: 22, serial: 444)!
+        let saved = WindowSnapshot(frame: CGRect(x: 100, y: 100, width: 300, height: 200),
+            relativeFrame: CGRect(x: 0.1, y: 0.1, width: 0.3, height: 0.3), screenID: missing, screenIndex: 0)
+        let remaining = DisplaySnapshot(screenID: other, frame: CGRect(x: 0, y: 0, width: 1920, height: 1080), index: 0)
+        assertNil(ScreenResolver().resolve(window: saved, displays: [remaining]), "missing physical monitor should not receive another monitor's windows")
+    }
+
+    private static func testAutoApplyMatchesPhysicalTopologyWithoutTrustingTransientIDs() {
+        let left = DisplayIdentity.stableID(vendor: 111, model: 22, serial: 333)!
+        let right = DisplayIdentity.stableID(vendor: 111, model: 22, serial: 444)!
+        func screen(_ id: String, _ x: CGFloat) -> ScreenConfiguration.Screen {
+            let frame = CGRect(x: x, y: 0, width: 1600, height: 900)
+            return .init(id: id, frame: frame, visibleFrame: frame, scale: 2)
+        }
+        let saved = ScreenConfiguration(screens: [screen(left, -1600), screen(right, 1920)])
+        let swapped = ScreenConfiguration(screens: [screen(right, -1600), screen(left, 1920)])
+        precondition(saved.matchesForAutoApply(swapped), "same physical pair after geometry swap")
+        let unknown = ScreenConfiguration(screens: [screen("screen_21", -1600), screen("screen_42", 1920)])
+        precondition(!unknown.matchesForAutoApply(unknown), "transient IDs cannot authorize auto-apply")
+        let duplicate = ScreenConfiguration(screens: [screen(left, -1600), screen(left, 1920)])
+        precondition(!duplicate.matchesForAutoApply(duplicate), "duplicate fingerprint cannot authorize auto-apply")
     }
 
     private static func testNegativeArrangementAndLegacyIndexFallback() {

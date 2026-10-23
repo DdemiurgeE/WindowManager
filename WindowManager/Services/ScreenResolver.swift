@@ -1,5 +1,43 @@
+import AppKit
 import CoreGraphics
+import CryptoKit
 import Foundation
+
+/// Physical identity when the display supplies a unique, nonzero hardware serial.
+/// The digest avoids persisting the serial itself; it is not a secret or a
+/// substitute for validating uniqueness among currently attached displays.
+enum DisplayIdentity {
+    static func stableID(vendor: UInt32, model: UInt32, serial: UInt32) -> String? {
+        guard vendor != 0, model != 0, serial != 0, serial != UInt32.max else { return nil }
+        let bytes = SHA256.hash(data: Data("\(vendor):\(model):\(serial)".utf8))
+        return "display_" + bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func resolveIDs(candidates: [String?], observations: [String]) -> [String] {
+        guard candidates.count == observations.count else { return observations }
+        let counts = candidates.compactMap { $0 }.reduce(into: [String: Int]()) { $0[$1, default: 0] += 1 }
+        return candidates.indices.map { index in
+            guard let id = candidates[index], counts[id] == 1 else { return observations[index] }
+            return id
+        }
+    }
+
+    static func screenIDs(for screens: [NSScreen]) -> [String] {
+        let numbers = screens.map { $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber }
+        let candidates = numbers.map { number -> String? in
+            guard let number else { return nil }
+            let id = number.uint32Value
+            return stableID(vendor: CGDisplayVendorNumber(id), model: CGDisplayModelNumber(id),
+                serial: CGDisplaySerialNumber(id))
+        }
+        let observations = screens.indices.map { index -> String in
+            if let number = numbers[index] { return "screen_\(number.uint32Value)" }
+            let frame = screens[index].frame
+            return "screen_\(Int(frame.width))x\(Int(frame.height))_\(Int(frame.minX))_\(Int(frame.minY))"
+        }
+        return resolveIDs(candidates: candidates, observations: observations)
+    }
+}
 
 /// Platform-neutral display information used by `ScreenResolver`.
 /// `screenID` is an observation key, not a claim of hardware identity.
@@ -81,7 +119,13 @@ struct ScreenResolver {
         guard !displays.isEmpty else { return nil }
 
         let selected: (display: DisplaySnapshot, selection: DisplaySelection)
-        if let id = usableID(window.screenID), let display = uniqueDisplay(withID: id, in: displays) {
+        if let id = usableID(window.screenID), id.hasPrefix("display_") {
+            // A missing or duplicated physical identity must not silently
+            // redirect a window to a different external monitor.
+            guard let display = uniqueDisplay(withID: id, in: displays) else { return nil }
+            selected = (display, .screenID)
+        } else if let id = usableID(window.screenID), !id.hasPrefix("screen_"),
+           let display = uniqueDisplay(withID: id, in: displays) {
             selected = (display, .screenID)
         } else if let display = displayContainingWindowCenter(window.frame, displays: displays) {
             selected = (display, .frameCenter)

@@ -79,25 +79,15 @@ class ScreenMonitorService: ObservableObject {
     
     func getCurrentScreenConfiguration() -> ScreenConfiguration {
         let screens = NSScreen.screens
-        return ScreenConfiguration(screens: screens.map { screen in
+        let identities = DisplayIdentity.screenIDs(for: screens)
+        return ScreenConfiguration(screens: screens.enumerated().map { index, screen in
             ScreenConfiguration.Screen(
-                id: getScreenID(for: screen),
+                id: identities[index],
                 frame: screen.frame,
                 visibleFrame: screen.visibleFrame,
                 scale: screen.backingScaleFactor
             )
         })
-    }
-    
-    private func getScreenID(for screen: NSScreen) -> String {
-        // Используем deviceDescription для получения уникального ID монитора
-        if let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
-            return "screen_\(screenNumber.intValue)"
-        }
-        
-        // Fallback: используем размер и позицию экрана
-        let frame = screen.frame
-        return "screen_\(Int(frame.width))x\(Int(frame.height))_\(Int(frame.origin.x))_\(Int(frame.origin.y))"
     }
     
     private func scheduleAutoApplyAfterScreenStabilizes() {
@@ -270,7 +260,7 @@ class ScreenMonitorService: ObservableObject {
     }
 
     private func configurationsMatch(_ saved: ScreenConfiguration, _ current: ScreenConfiguration) -> Bool {
-        saved.screenIDs == current.screenIDs && (saved.screens.isEmpty || current.screens.isEmpty || saved == current)
+        saved.matchesForAutoApply(current)
     }
 
     private func scheduleRetryIfNeeded(layout: Layout, missingIDs: Set<UUID>, windowService: WindowService) {

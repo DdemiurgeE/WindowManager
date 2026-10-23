@@ -31,6 +31,20 @@ struct ScreenConfiguration: Codable, Equatable {
         self.screenCount = self.screens.count
     }
 
+    /// Auto-apply may target physical displays only when every identity is
+    /// unique and backed by hardware. Old `screen_` observation keys cannot
+    /// distinguish monitors that macOS renumbered after reconnecting.
+    var hasReliablePhysicalIdentity: Bool {
+        !screenIDs.isEmpty && screenCount == screens.count &&
+        Set(screenIDs).count == screenCount &&
+        screenIDs.allSatisfy { $0.hasPrefix("display_") }
+    }
+
+    func matchesForAutoApply(_ current: ScreenConfiguration) -> Bool {
+        hasReliablePhysicalIdentity && current.hasReliablePhysicalIdentity &&
+        screenIDs == current.screenIDs
+    }
+
     private enum CodingKeys: String, CodingKey {
         case screenIDs, screenCount, screens
     }

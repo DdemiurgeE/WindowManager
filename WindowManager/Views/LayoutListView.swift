@@ -45,6 +45,13 @@ struct LayoutListView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                if layoutStorage.layouts.contains(where: { $0.screenConfiguration?.hasReliablePhysicalIdentity != true }) {
+                    Label("Older or unidentified displays: capture a new layout to enable reliable Auto-apply. Manual preview and restore remain available.", systemImage: "display.2")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal)
+                        .accessibilityLabel("Auto-apply requires a new capture with uniquely identified monitors. Older layouts remain available for manual preview and restore.")
+                }
                 List {
                     ForEach(layoutStorage.layouts) { layout in
                         LayoutRow(layout: layout, onPreview: { previewLayout = layout })
