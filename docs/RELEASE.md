@@ -1,6 +1,6 @@
 # WindowManager release model
 
-## v3.1 — stable physical display matching (release candidate; live acceptance pending)
+## v3.1 — stable physical display matching (released; live acceptance pending)
 
 A unique, nonzero vendor/model/serial fingerprint (stored only as a SHA-256 digest)
 now follows each physical monitor when macOS reassigns its temporary screen number.
@@ -14,11 +14,15 @@ preview and restore remain available. Monitors without a unique hardware serial
 cannot safely enable Auto-apply.
 
 Version `MARKETING_VERSION=3.1`, build `CURRENT_PROJECT_VERSION=9`.
-The new resolver fixtures and all standalone harnesses, legacy JSON fixture,
-unsigned Debug/Release builds and package checks are required before publication.
-No live GUI/Accessibility operation, display reconnection, real-window mutation,
-layout capture, clipboard operation, or user-setting change is part of automated
-acceptance. Synthetic tests do not prove live monitor behavior.
+PR #16 passed Debug/Release hosted CI, was merged at `6f8919263e8dd49b689baba32e882180e2f4f509`,
+and was published from tag `v3.1` after the post-merge CI passed. All 12
+standalone synthetic harnesses and the legacy JSON fixture passed locally;
+the downloaded release ZIP, DMG, checksum manifest, and bundled code signature
+were verified. The Sparkle entry signs the exact downloaded ZIP, with public
+feed propagation verified separately. No live GUI/Accessibility operation,
+display reconnection, real-window mutation, layout capture, clipboard
+operation, or user-setting change was part of automated acceptance. Synthetic
+tests do not prove live monitor behavior.
 
 ## v3.0 — per-copy diagnostics consent and console privacy (released; live acceptance pending)
 
