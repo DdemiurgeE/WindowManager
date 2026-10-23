@@ -124,6 +124,7 @@ class WindowService: ObservableObject {
         
         let runningApps = NSWorkspace.shared.runningApplications
         let screens = NSScreen.screens
+        let screenIDs = DisplayIdentity.screenIDs(for: screens)
         
         for app in runningApps {
             guard app.activationPolicy == .regular,
@@ -137,7 +138,7 @@ class WindowService: ObservableObject {
             
             if result == .success, let windowArray = windowsRef as? [AXUIElement] {
                 for windowElement in windowArray {
-                    if let windowInfo = self.getWindowInfo(from: windowElement, appName: app.localizedName ?? "Unknown", bundleIdentifier: app.bundleIdentifier, screens: screens) {
+                    if let windowInfo = self.getWindowInfo(from: windowElement, appName: app.localizedName ?? "Unknown", bundleIdentifier: app.bundleIdentifier, screens: screens, screenIDs: screenIDs) {
                         windows.append(windowInfo)
                     }
                 }
@@ -163,7 +164,7 @@ class WindowService: ObservableObject {
         return WindowCoordinateConverter(primaryScreenFrame: primaryScreen.frame)
     }
 
-    private func getWindowInfo(from windowElement: AXUIElement, appName: String, bundleIdentifier: String?, screens: [NSScreen]) -> WindowInfo? {
+    private func getWindowInfo(from windowElement: AXUIElement, appName: String, bundleIdentifier: String?, screens: [NSScreen], screenIDs: [String]) -> WindowInfo? {
         var titleRef: CFTypeRef?
         var positionRef: CFTypeRef?
         var sizeRef: CFTypeRef?
@@ -227,7 +228,7 @@ class WindowService: ObservableObject {
             frame: screenFrame,
             screenIndex: screenIndex,
             relativeFrame: relativeFrame,
-            screenID: getScreenID(for: targetScreen),
+            screenID: screenIDs[screenIndex],
             bundleIdentifier: bundleIdentifier,
             axRole: roleRef as? String,
             axSubrole: subroleRef as? String,
@@ -327,8 +328,9 @@ class WindowService: ObservableObject {
 
     private func makeRestorePlan(layout: Layout, targets: [WindowInfo]) -> (plan: WindowRestorePlan, elements: [String: AnyObject]) {
         let screens = NSScreen.screens
+        let screenIDs = DisplayIdentity.screenIDs(for: screens)
         let displays = screens.enumerated().map { index, screen in
-            DisplaySnapshot(screenID: getScreenID(for: screen), frame: screen.frame,
+            DisplaySnapshot(screenID: screenIDs[index], frame: screen.frame,
                 visibleFrame: screen.visibleFrame, scale: screen.backingScaleFactor, index: index)
         }
         let apps = NSWorkspace.shared.runningApplications
@@ -403,8 +405,9 @@ class WindowService: ObservableObject {
     /// assign a different number after hot-plug. It is therefore never treated as a
     /// permanent vendor/model/serial hardware identity.
     private func resolveTargetFrame(for windowInfo: WindowInfo, screens: [NSScreen]) -> CGRect {
+        let screenIDs = DisplayIdentity.screenIDs(for: screens)
         let displays = screens.enumerated().map { index, screen in
-            DisplaySnapshot(screenID: getScreenID(for: screen), frame: screen.frame, visibleFrame: screen.visibleFrame, scale: screen.backingScaleFactor, index: index)
+            DisplaySnapshot(screenID: screenIDs[index], frame: screen.frame, visibleFrame: screen.visibleFrame, scale: screen.backingScaleFactor, index: index)
         }
         let snapshot = WindowSnapshot(
             frame: windowInfo.frame,
@@ -483,17 +486,11 @@ class WindowService: ObservableObject {
     
     func getCurrentScreenConfiguration() -> ScreenConfiguration {
         let screens = NSScreen.screens
-        let screenIDs = screens.map { getScreenID(for: $0) }
-        return ScreenConfiguration(screenIDs: screenIDs)
-    }
-    
-    private func getScreenID(for screen: NSScreen) -> String {
-        if let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
-            return "screen_\(screenNumber.intValue)"
-        }
-        
-        let frame = screen.frame
-        return "screen_\(Int(frame.width))x\(Int(frame.height))_\(Int(frame.origin.x))_\(Int(frame.origin.y))"
+        let screenIDs = DisplayIdentity.screenIDs(for: screens)
+        return ScreenConfiguration(screens: screens.enumerated().map { index, screen in
+            ScreenConfiguration.Screen(id: screenIDs[index],
+                frame: screen.frame, visibleFrame: screen.visibleFrame, scale: screen.backingScaleFactor)
+        })
     }
 }
 

@@ -1,5 +1,25 @@
 # WindowManager release model
 
+## v3.1 — stable physical display matching (release candidate; live acceptance pending)
+
+A unique, nonzero vendor/model/serial fingerprint (stored only as a SHA-256 digest)
+now follows each physical monitor when macOS reassigns its temporary screen number.
+Capture, restore, and the display monitor use the same identity source. If a
+captured physical monitor is missing or ambiguous, its windows are skipped rather
+than moved to a different display. Legacy `screen_` identifiers are not trusted
+for exact manual selection; saved geometry provides a best-effort fallback.
+Auto-apply requires a complete unique physical display set, so existing layouts
+must be captured again. The Saved Layouts view explains this limitation; manual
+preview and restore remain available. Monitors without a unique hardware serial
+cannot safely enable Auto-apply.
+
+Version `MARKETING_VERSION=3.1`, build `CURRENT_PROJECT_VERSION=9`.
+The new resolver fixtures and all standalone harnesses, legacy JSON fixture,
+unsigned Debug/Release builds and package checks are required before publication.
+No live GUI/Accessibility operation, display reconnection, real-window mutation,
+layout capture, clipboard operation, or user-setting change is part of automated
+acceptance. Synthetic tests do not prove live monitor behavior.
+
 ## v3.0 — per-copy diagnostics consent and console privacy (released; live acceptance pending)
 
 **Copy with names…** now requires confirmation on every action; old persisted

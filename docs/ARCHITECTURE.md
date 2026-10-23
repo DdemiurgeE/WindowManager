@@ -51,9 +51,9 @@ Older JSON remains decodable: the newer metadata fields are optional, and layout
 
 ### ScreenConfiguration
 
-A screen configuration stores sorted display IDs, a display count, and (for current captures) sorted display records containing ID, frame, visible frame, and backing scale. `NSScreenNumber` is represented as `screen_<number>` when available; otherwise the ID is derived from display geometry.
+A screen configuration stores sorted display IDs, a display count, and (for current captures) sorted display records containing ID, frame, visible frame, and backing scale. New captures use a SHA-256 fingerprint of nonzero Core Graphics vendor/model/serial values when that fingerprint is unique among connected displays; raw serial numbers are not stored. A missing or duplicated hardware serial falls back to a `screen_<number>` observation key (or a geometry key when the number is unavailable).
 
-These IDs are observation keys, not permanent hardware identities. macOS may assign a different number after hot-plugging. The resolver therefore accepts an ID only when it is usable and unique in the current display snapshot. Vendor/model/serial fingerprints are not persisted.
+Old `screen_` keys are not permanent hardware identities: macOS may reassign them on hot-plug. On manual restore, the resolver uses saved frame geometry instead of trusting such a key. When a new physical fingerprint is unavailable or duplicated, the resolver skips the window rather than moving it to a different display. Auto-apply matches the unique physical display set, independently of arrangement and resolution, only for layouts captured with complete physical identities. **Existing layouts must be captured again to enable safe Auto-apply**; they remain readable and available for manual preview/restore. If a monitor lacks a unique serial, Auto-apply skips the topology instead of guessing.
 
 ## Capturing a layout
 
@@ -94,9 +94,9 @@ For each target, the service:
 
 `ScreenResolver` selects a display in this order:
 
-1. unique usable `screenID`;
-2. display containing the saved frame's center;
-3. captured `screenIndex`;
+1. unique captured physical `display_` fingerprint; a missing or duplicated physical match skips this window;
+2. for legacy `screen_` observation keys, display containing the saved frame's center (the old numeric ID is not trusted);
+3. captured `screenIndex` when geometry cannot identify a display;
 4. deterministic first display ordering.
 
 An exact absolute frame is used only when saved display frame, visible frame, scale, and current display geometry are all available and equal. Otherwise a finite `relativeFrame` is converted to the selected display. If no usable relative frame exists, the saved absolute frame is retained as a legacy fallback. Unless `preservePresentation` is true, the candidate frame is clamped so a useful title-bar strip remains reachable within the current visible frame; the saved size is not silently reduced.
@@ -123,7 +123,7 @@ When Auto-apply is enabled (the `UserDefaults` key is `autoApplyEnabled`, defaul
 1. The service polls the display snapshot every 0.25 seconds.
 2. It requires three consecutive equal snapshots before applying; geometry and scale are part of the current snapshot.
 3. If stability is not reached within 10 seconds, it skips the auto-apply rather than treating an unstable topology as safe.
-4. It matches layouts by screen IDs and, when both configurations contain geometry, by complete `ScreenConfiguration` equality.
+4. It matches layouts by a unique set of physical `display_` identities; geometry changes no longer confuse one physical monitor with another. Legacy or ambiguous identifiers are ineligible until the layout is captured again.
 5. It excludes imported layout IDs persisted in the same store transaction (even after manual restore or last-used updates), then selects the most recently used eligible matching layout. Eligibility is checked again before initial restore and each retry; unavailable or changed storage fails closed.
 6. It records `started` and `completed`, `noMatch`, or `cancelled` events in an in-memory restore log capped at 20 entries.
 7. It records `lastUsed` as the time of the latest apply attempt; this field is not evidence that every window was restored successfully. The UI labels it “Last attempted”.
@@ -148,7 +148,7 @@ Restore, Auto-apply, menu-bar apply, and restore-event console lines omit layout
 - Dynamic titles and changing application window sets can prevent assignment; bundle IDs and AX role metadata improve matching but do not guarantee it.
 - Some applications reject AX changes, clamp frames, or change them after read-back. The result reports that outcome rather than claiming success.
 - Accessibility is required for capture and restore. Screen Recording status is checked heuristically through window-list access.
-- Display IDs can change after reconnect; normalized coordinates adapt geometry but do not prove that two IDs refer to the same physical monitor.
+- Physical display fingerprints from unique nonzero vendor/model/serial data survive a transient screen-number change; when unavailable, manual legacy geometry fallback remains a best-effort choice rather than proof of physical identity. Auto-apply will not use an ambiguous or legacy configuration.
 - No live GUI/display mutation was part of the automated verification. The WindowManager scheme has no test action, so `xcodebuild test` is not available for this target.
 
 ## Verification evidence
