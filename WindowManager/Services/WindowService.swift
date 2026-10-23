@@ -256,6 +256,62 @@ class WindowService: ObservableObject {
         return bestIndex
     }
     
+    /// Explicit user action: move one currently selected window to a zone on
+    /// one currently attached display. Never writes the saved layout store.
+    func snapWindow(_ window: WindowInfo, to zone: SnapZone, displayID: String) -> SnapActionResult {
+        guard PermissionsService.shared.checkAccessibilityPermission() else { return .permissionDenied }
+        guard coordinateConverter != nil else { return .coordinateUnavailable }
+        let screens = NSScreen.screens
+        let ids = DisplayIdentity.screenIDs(for: screens)
+        let displays = screens.enumerated().map { index, screen in
+            SnapDisplay(id: ids[index], frame: screen.frame, visibleFrame: screen.visibleFrame)
+        }
+        guard let frame = SnapPlanner.target(zone: zone, displayID: displayID, displays: displays) else {
+            return .displayUnavailable
+        }
+        let layout = Layout(name: "Snap", windows: [window]) // transient; never persisted
+        let (plan, elements) = makeRestorePlan(layout: layout, targets: [window])
+        guard let candidateID = plan.items.first?.candidateID,
+              let element = elements[candidateID] else { return .windowUnavailable }
+        // Recheck the physical target after the AX scan: hot-plug must fail
+        // closed rather than redirecting the window to another display.
+        let latestScreens = NSScreen.screens
+        let latestIDs = DisplayIdentity.screenIDs(for: latestScreens)
+        let latest = latestScreens.enumerated().map { index, screen in
+            SnapDisplay(id: latestIDs[index], frame: screen.frame, visibleFrame: screen.visibleFrame)
+        }
+        guard SnapPlanner.target(zone: zone, displayID: displayID, displays: latest) == frame else {
+            return .displayUnavailable
+        }
+        switch setWindowFrame(element, frame: frame) {
+        case .positionSet: return .positionSet
+        case .appImposedClamp: return .appImposedClamp
+        case .coordinateUnavailable: return .coordinateUnavailable
+        default: return .axFailure
+        }
+    }
+
+    /// Drag release uses the exact focused AX window, avoiding a second fuzzy
+    /// assignment after the user's pointer has already selected it.
+    func snapAXWindow(_ window: AnyObject, to zone: SnapZone, displayID: String) -> SnapActionResult {
+        guard PermissionsService.shared.checkAccessibilityPermission() else { return .permissionDenied }
+        guard coordinateConverter != nil else { return .coordinateUnavailable }
+        let screens = NSScreen.screens
+        let ids = DisplayIdentity.screenIDs(for: screens)
+        let displays = screens.enumerated().map { index, screen in
+            SnapDisplay(id: ids[index], frame: screen.frame, visibleFrame: screen.visibleFrame)
+        }
+        guard let frame = SnapPlanner.target(zone: zone, displayID: displayID, displays: displays) else {
+            return .displayUnavailable
+        }
+        switch setWindowFrame(window, frame: frame) {
+        case .positionSet: return .positionSet
+        case .appImposedClamp: return .appImposedClamp
+        case .coordinateUnavailable: return .coordinateUnavailable
+        default: return .axFailure
+        }
+    }
+
     @discardableResult
     func restoreLayout(_ layout: Layout, windowIDs: Set<UUID>? = nil) -> RestoreResult {
         let targets = windowIDs.map { ids in layout.windows.filter { ids.contains($0.id) } } ?? layout.windows

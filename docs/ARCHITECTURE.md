@@ -55,6 +55,26 @@ A screen configuration stores sorted display IDs, a display count, and (for curr
 
 Old `screen_` keys are not permanent hardware identities: macOS may reassign them on hot-plug. On manual restore, the resolver uses saved frame geometry instead of trusting such a key. When a new physical fingerprint is unavailable or duplicated, the resolver skips the window rather than moving it to a different display. Auto-apply matches the unique physical display set, independently of arrangement and resolution, only for layouts captured with complete physical identities. **Existing layouts must be captured again to enable safe Auto-apply**; they remain readable and available for manual preview/restore. If a monitor lacks a unique serial, Auto-apply skips the topology instead of guessing.
 
+## Per-display window snapping (v3.2 candidate)
+
+`WindowSnap` calculates halves, quarters, thirds, two-thirds and fill-area
+frames from the selected `NSScreen.visibleFrame`. `SnapPlanner` refuses an
+absent or duplicated current display identity. The main view lets the user
+refresh accessible windows, choose one window and one display explicitly, then
+select a tile. `WindowService.snapWindow` reuses the existing assignment and AX
+frame read-back engine, checks the display again after assignment, and never
+writes the saved layout store. The user can then save the resulting arrangement
+using **Save Current Layout** for later restoration on the same physical set.
+
+`SnapDragService` is separately opt-in (default off). A global mouse observer
+tracks a focused standard window's Accessibility position while the user drags
+its title bar; a stationary pointer or top-border resize does not qualify. On
+mouse release near an edge, it snaps that exact window through the same AX
+write/read-back engine. The monitor never intercepts mouse input or reads
+keyboard events. If permission or the monitor is unavailable, no automatic snap
+is attempted. The synthetic harness validates geometry, drag gate and target
+uniqueness; it does not validate live mouse, AX or permission behavior.
+
 ## Capturing a layout
 
 `WindowService.captureCurrentLayout()`:

@@ -1,5 +1,29 @@
 # WindowManager release model
 
+## v3.2 — per-display snapping (candidate; live acceptance required)
+
+The main window now offers **Snap Windows**: refresh available windows, select an
+individual window and a currently attached display, then choose a half, quarter,
+third, two-thirds or fill-visible-area tile. The calculation uses each display's
+visible frame (excluding Dock and menu bar), and the target is revalidated
+before the Accessibility write. Saved layouts are not overwritten by snapping;
+**Save Current Layout** captures a chosen arrangement for later restoration.
+
+An explicit **Snap while dragging** switch (off by default) monitors mouse
+movement outside the app. It snaps the focused standard window on release at a
+display edge only if its Accessibility position changed during a title-bar drag.
+Corners produce quarters, sides produce halves, top fills the usable area, and
+bottom produces thirds. It does not install a keyboard event tap or intercept
+input. Accessibility is required; macOS may also require Input Monitoring for
+global mouse observation. A denied monitor fails inactive, not as an implied
+permission grant. Test geometry, gesture gating and missing/duplicate displays
+synthetically; do not mistake those tests for a real drag-and-drop UX check.
+
+No automatic test may rearrange actual windows or displays, change saved layouts,
+start the installed application, or alter the user's settings. Before publishing
+this feature, verify the live drag interaction with explicit user permission or
+record an informed risk decision. Proposed version: 3.2, build 10.
+
 ## v3.1 — stable physical display matching (released; live acceptance pending)
 
 A unique, nonzero vendor/model/serial fingerprint (stored only as a SHA-256 digest)
