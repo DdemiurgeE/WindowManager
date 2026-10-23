@@ -48,6 +48,7 @@ struct WindowManagerApp: App {
             layoutStorage: layoutStorage,
             windowService: windowService
         )
+        SnapDragService.shared.setup(windowService: windowService)
     }
 }
 

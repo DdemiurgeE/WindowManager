@@ -45,6 +45,7 @@ jobs:
           scripts/run-restore-result-mapping-tests.sh
           scripts/run-restore-diagnostics-tests.sh
           scripts/run-screen-resolver-tests.sh
+          scripts/run-window-snap-tests.sh
           scripts/run-window-assignment-tests.sh
           scripts/run-legacy-json-fixture-test.sh
           scripts/run-layout-backup-export-tests.sh
