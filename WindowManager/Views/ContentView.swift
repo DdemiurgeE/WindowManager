@@ -3,6 +3,7 @@ import SwiftUI
 struct ScreenDetailInfo: Identifiable {
     let id = UUID()
     let index: Int
+    let displayID: String
     let frame: CGRect
     let isPrimary: Bool
     let scale: CGFloat
@@ -24,6 +25,7 @@ struct ContentView: View {
     @EnvironmentObject var windowService: WindowService
     @EnvironmentObject var layoutStorage: LayoutStorageService
     @StateObject private var screenMonitor = ScreenMonitorService.shared
+    @StateObject private var snapDragService = SnapDragService.shared
     @AppStorage("autoApplyEnabled") private var autoApplyEnabled = true
     @State private var layoutName = ""
     @State private var showingSaveAlert = false
@@ -31,6 +33,10 @@ struct ContentView: View {
     @State private var currentWindows: [WindowInfo] = []
     @State private var showingSaveSheet = false
     @State private var showingStorageError = false
+    @State private var selectedSnapWindowID: UUID?
+    @State private var selectedSnapDisplayID: String?
+    @State private var snapMessage: String?
+    @AppStorage("snapOnDragEnabled") private var snapOnDragEnabled = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -172,6 +178,12 @@ struct ContentView: View {
                 Divider()
                     .padding(.horizontal)
 
+                // Per-display window snapping
+                snappingSection
+
+                Divider()
+                    .padding(.horizontal)
+
                 // Saved Layouts Section
                 savedLayoutsSection
             }
@@ -258,6 +270,69 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    // MARK: - Per-display snapping
+
+    private var snappingSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Snap Windows", systemImage: "rectangle.split.2x2")
+                .font(.headline)
+            Text("Choose a window, a display, and a tile. Then use Save Current Layout to keep the arrangement for these monitors.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            HStack {
+                Button("Find Windows", systemImage: "arrow.clockwise") { refreshWindowsForSnap() }
+                Picker("Window", selection: $selectedSnapWindowID) {
+                    Text("Select window").tag(nil as UUID?)
+                    ForEach(currentWindows) { window in
+                        Text("\(window.appName) — \(window.windowTitle)")
+                            .tag(Optional(window.id))
+                    }
+                }
+                .frame(maxWidth: 300)
+                Picker("Display", selection: $selectedSnapDisplayID) {
+                    Text("Select display").tag(nil as String?)
+                    ForEach(screenDetails) { display in
+                        Text("\(display.displayName) · \(display.resolution)")
+                            .tag(Optional(display.displayID))
+                    }
+                }
+                .frame(maxWidth: 210)
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
+                ForEach(SnapZone.allCases) { zone in
+                    Button(zone.title) { snapSelectedWindow(to: zone) }
+                        .disabled(selectedSnapWindowID == nil || selectedSnapDisplayID == nil)
+                }
+            }
+            Toggle("Snap while dragging to display edges (Accessibility required)", isOn: $snapOnDragEnabled)
+                .onChange(of: snapOnDragEnabled) { _, enabled in
+                    snapDragService.setEnabled(enabled)
+                }
+            if snapOnDragEnabled && !snapDragService.isMonitoring {
+                Text("Drag snapping is not active. Grant Accessibility permission, then toggle it off and on. macOS may also require Input Monitoring permission.")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+            if let snapMessage {
+                Text(snapMessage).font(.caption).foregroundColor(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func refreshWindowsForSnap() {
+        currentWindows = windowService.captureCurrentLayout()
+        updateScreenDetails()
+        selectedSnapWindowID = currentWindows.first?.id
+        snapMessage = currentWindows.isEmpty ? "No accessible windows found. Check Accessibility permission." : nil
+    }
+
+    private func snapSelectedWindow(to zone: SnapZone) {
+        guard let id = selectedSnapWindowID, let displayID = selectedSnapDisplayID,
+              let window = currentWindows.first(where: { $0.id == id }) else { return }
+        snapMessage = windowService.snapWindow(window, to: zone, displayID: displayID).message
+    }
+
     // MARK: - Saved Layouts Section
 
     private var savedLayoutsSection: some View {
@@ -285,13 +360,18 @@ struct ContentView: View {
 
     private func updateScreenDetails() {
         let screens = NSScreen.screens
+        let displayIDs = DisplayIdentity.screenIDs(for: screens)
         screenDetails = screens.enumerated().map { index, screen in
             ScreenDetailInfo(
                 index: index,
+                displayID: displayIDs[index],
                 frame: screen.frame,
                 isPrimary: index == 0,
                 scale: screen.backingScaleFactor
             )
+        }
+        if !screenDetails.contains(where: { $0.displayID == selectedSnapDisplayID }) {
+            selectedSnapDisplayID = screenDetails.first?.displayID
         }
     }
 

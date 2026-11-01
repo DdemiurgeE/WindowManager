@@ -23,8 +23,8 @@ struct WindowInfo: Codable, Identifiable {
     /// изменила абсолютное расположение мониторов при переподключении.
     let relativeFrame: CGRect?
 
-    /// Stable display identifier captured from NSScreenNumber.
-    /// Optional for backward compatibility with layouts saved before v2.4.
+    /// Physical display fingerprint for unique hardware identities, otherwise
+    /// a transient observation key. Optional for pre-v2.4 layouts.
     let screenID: String?
 
     /// The display geometry captured with the frame. Optional for old layouts.
