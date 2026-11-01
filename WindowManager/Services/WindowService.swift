@@ -548,6 +548,49 @@ class WindowService: ObservableObject {
                 frame: screen.frame, visibleFrame: screen.visibleFrame, scale: screen.backingScaleFactor)
         })
     }
+    
+    // MARK: - Snap Active Window
+    
+    func snapActiveWindow(to zone: SnapZone, on screen: NSScreen) {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              let focused = focusedStandardWindow(for: app.processIdentifier) else {
+            print("WindowService: No focused window found")
+            return
+        }
+        
+        // Calculate target frame using SnapGeometry
+        let visibleFrame = screen.visibleFrame
+        guard let targetFrame = SnapGeometry.frame(for: zone, in: visibleFrame) else {
+            print("WindowService: Could not calculate frame for zone \\(zone)")
+            return
+        }
+        
+        // Apply the new position and size
+        let axPosition = CGPoint(x: targetFrame.origin.x, y: screen.frame.height - targetFrame.origin.y - targetFrame.height)
+        axClient.setPosition(axPosition, of: focused)
+        axClient.setSize(targetFrame.size, of: focused)
+        
+        print("WindowService: Snapped window to \\(zone.title) at \\(targetFrame)")
+    }
+    
+    private func focusedStandardWindow(for pid: pid_t) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        var focusedWindow: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &focusedWindow)
+        guard result == .success, let window = focusedWindow else { return nil }
+        
+        // Verify it's a standard window
+        var role: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window as! AXUIElement, kAXRoleAttribute as CFString, &role) == .success,
+              let roleStr = role as? String, roleStr == kAXWindowRole else { return nil }
+        
+        var subrole: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window as! AXUIElement, kAXSubroleAttribute as CFString, &subrole) == .success,
+              let subroleStr = subrole as? String, subroleStr == kAXStandardWindowSubrole else { return nil }
+        
+        return window as! AXUIElement
+    }
 }
 
 extension WindowService: RestorePreviewPlanning {

@@ -4,12 +4,12 @@
 <dict>
 	<key>CFBundleIconFile</key>
 	<string>WindowManager</string>
-	<key>SUFeedURL</key>
-	<string>https://ddemiurgee.github.io/WindowManager/appcast.xml</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
 	<key>SUAutomaticallyUpdate</key>
 	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://ddemiurgee.github.io/WindowManager/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>l2mgkExreHN0q006vLNTXqQeUrgEcouFLB35fTnASoA=</string>
 </dict>
