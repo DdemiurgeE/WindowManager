@@ -6,11 +6,11 @@
         <description>WindowManager updates.</description>
         <item>
             <title>Version 3.2</title>
-            <pubDate>Sun, 01 Nov 2026 09:33:14 +0000</pubDate>
-            <sparkle:version>10</sparkle:version>
+            <pubDate>Sun, 01 Nov 2026 19:43:59 +0000</pubDate>
+            <sparkle:version>11</sparkle:version>
             <sparkle:shortVersionString>3.2</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.2</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/DdemiurgeE/WindowManager/releases/download/v3.2/WindowManager-3.2.zip" type="application/octet-stream" sparkle:edSignature="IXkqXrJQpdEEYWtdRSZjFiTu5EvX+14ZDsjsar5+mDdvjjCZAbWwVRpkbe4M3nSZai9v588ZHWQQ1ivHPJEdAg==" length="2393967" />
+            <enclosure url="https://github.com/DdemiurgeE/WindowManager/releases/download/v3.2/WindowManager-3.2.zip" type="application/octet-stream" sparkle:edSignature="f7emAwePK484u3KFNM6eNtNJXlZWIRJ1ccDbskSBowE1aA0cLYIxeW8Zq6NvpS0E9bX8E528ne5kzVnnq/QXDQ==" length="2412830" />
         </item>
         <item>
             <title>Version 3.1</title>
