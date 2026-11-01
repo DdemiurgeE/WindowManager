@@ -77,4 +77,14 @@ struct Layout: Codable, Identifiable {
         self.lastUsed = nil
         self.screenConfiguration = screenConfiguration
     }
+    
+    /// Create a layout with a specific ID (for updates)
+    init(id: UUID, name: String, windows: [WindowInfo], createdAt: Date, lastUsed: Date?, screenConfiguration: ScreenConfiguration?) {
+        self.id = id
+        self.name = name
+        self.windows = windows
+        self.createdAt = createdAt
+        self.lastUsed = lastUsed
+        self.screenConfiguration = screenConfiguration
+    }
 }

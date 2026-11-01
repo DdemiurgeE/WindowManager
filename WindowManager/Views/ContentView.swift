@@ -57,8 +57,9 @@ struct ContentView: View {
                 layoutName: $layoutName,
                 windows: currentWindows,
                 screenDetails: screenDetails,
-                onSave: { name in
-                    saveLayout(name: name)
+                existingLayouts: layoutStorage.layouts,
+                onSave: { action in
+                    saveLayout(action: action)
                 },
                 onCancel: {
                     showingSaveSheet = false
@@ -381,10 +382,33 @@ struct ContentView: View {
         showingSaveSheet = true
     }
 
-    private func saveLayout(name: String) {
+    private func saveLayout(action: SaveAction) {
         let screenConfig = windowService.getCurrentScreenConfiguration()
-        let layout = Layout(name: name, windows: currentWindows, screenConfiguration: screenConfig)
-        do { try layoutStorage.saveLayout(layout) } catch {
+        
+        do {
+            switch action {
+            case .newLayout(let name):
+                let layout = Layout(name: name, windows: currentWindows, screenConfiguration: screenConfig)
+                try layoutStorage.saveLayout(layout)
+                
+            case .overwriteLayout(let id, let name):
+                // Find existing layout and update it with new windows, preserving ID
+                guard let existingLayout = layoutStorage.layouts.first(where: { $0.id == id }) else {
+                    showingStorageError = true
+                    return
+                }
+                // Create a new Layout with the same ID but updated windows
+                let updatedLayout = Layout(
+                    id: existingLayout.id,
+                    name: name,
+                    windows: currentWindows,
+                    createdAt: existingLayout.createdAt,
+                    lastUsed: existingLayout.lastUsed,
+                    screenConfiguration: screenConfig
+                )
+                try layoutStorage.updateLayout(updatedLayout)
+            }
+        } catch {
             showingStorageError = true
             return
         }
@@ -406,14 +430,27 @@ struct ContentView: View {
 
 // MARK: - Save Layout Sheet
 
+enum SaveMode: String, CaseIterable {
+    case new = "Save as New"
+    case overwrite = "Overwrite Existing"
+}
+
+enum SaveAction {
+    case newLayout(name: String)
+    case overwriteLayout(id: UUID, name: String)
+}
+
 struct SaveLayoutSheet: View {
     @Binding var layoutName: String
     let windows: [WindowInfo]
     let screenDetails: [ScreenDetailInfo]
-    let onSave: (String) -> Void
+    let existingLayouts: [Layout]
+    let onSave: (SaveAction) -> Void
     let onCancel: () -> Void
 
     @State private var selectedWindows: Set<UUID> = []
+    @State private var saveMode: SaveMode = .new
+    @State private var selectedLayoutID: UUID?
 
     var body: some View {
         VStack(spacing: 20) {
@@ -438,6 +475,49 @@ struct SaveLayoutSheet: View {
             // Content
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    // Save mode picker
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Save Mode", systemImage: "square.and.arrow.up.on.square")
+                            .font(.headline)
+
+                        Picker("Save Mode", selection: $saveMode) {
+                            ForEach(SaveMode.allCases, id: \.self) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        if saveMode == .overwrite {
+                            if existingLayouts.isEmpty {
+                                Text("No saved layouts available")
+                                    .foregroundColor(.secondary)
+                                    .font(.caption)
+                            } else {
+                                Menu {
+                                    ForEach(existingLayouts) { layout in
+                                        Button(layout.name) {
+                                            selectedLayoutID = layout.id
+                                            layoutName = layout.name
+                                        }
+                                    }
+                                } label: {
+                                    HStack {
+                                        Text(selectedLayoutID.flatMap { id in
+                                            existingLayouts.first(where: { $0.id == id })?.name
+                                        } ?? "Select layout to overwrite")
+                                            .foregroundColor(selectedLayoutID == nil ? .secondary : .primary)
+                                        Spacer()
+                                        Image(systemName: "chevron.down")
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(8)
+                                    .background(Color.gray.opacity(0.1))
+                                    .cornerRadius(6)
+                                }
+                            }
+                        }
+                    }
+
                     // Layout name
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Layout Name", systemImage: "textformat")
@@ -445,6 +525,7 @@ struct SaveLayoutSheet: View {
 
                         TextField("Enter layout name", text: $layoutName)
                             .textFieldStyle(.roundedBorder)
+                            .disabled(saveMode == .overwrite && selectedLayoutID != nil)
                     }
 
                     // Screen configuration
@@ -502,11 +583,15 @@ struct SaveLayoutSheet: View {
 
                 Button("Save Layout") {
                     if !layoutName.isEmpty {
-                        onSave(layoutName)
+                        if saveMode == .overwrite, let id = selectedLayoutID {
+                            onSave(.overwriteLayout(id: id, name: layoutName))
+                        } else {
+                            onSave(.newLayout(name: layoutName))
+                        }
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(layoutName.isEmpty)
+                .disabled(layoutName.isEmpty || (saveMode == .overwrite && selectedLayoutID == nil))
                 .keyboardShortcut(.defaultAction)
             }
             .padding()
