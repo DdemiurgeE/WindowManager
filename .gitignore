@@ -9,3 +9,5 @@ dist/
 # Graphify output
 graphify-out/
 *.private-key
+.DS_Store
+.build/
