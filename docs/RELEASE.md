@@ -1,6 +1,6 @@
 # WindowManager release model
 
-## v3.2 — per-display snapping (candidate; live acceptance required)
+## v3.2 — per-display snapping (build 10; synthetic tests passed; live drag-to-edge UX pending user approval)
 
 The main window now offers **Snap Windows**: refresh available windows, select an
 individual window and a currently attached display, then choose a half, quarter,
@@ -22,7 +22,7 @@ synthetically; do not mistake those tests for a real drag-and-drop UX check.
 No automatic test may rearrange actual windows or displays, change saved layouts,
 start the installed application, or alter the user's settings. Before publishing
 this feature, verify the live drag interaction with explicit user permission or
-record an informed risk decision. Proposed version: 3.2, build 10.
+record an informed risk decision. Version 3.2, build 10 released. Synthetic validation: 14 test harnesses PASS, Debug+Release builds PASS, ZIP/DMG packaged, SHA256 verified, codesign valid, appcast.xml generated with Ed25519 signature. Live drag-to-edge UX via Accessibility has not been tested.
 
 ## v3.1 — stable physical display matching (released; live acceptance pending)
 
