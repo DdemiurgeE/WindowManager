@@ -36,11 +36,7 @@ struct WindowManagerApp: App {
     }
     
     private func setupServices() {
-        // Инициализируем StatusBar
-        StatusBarService.shared.setup(
-            windowService: windowService,
-            layoutStorage: layoutStorage
-        )
+        // StatusBar is now initialized in AppDelegate.configureMainWindow()
         appDelegate.configureMainWindow(windowService: windowService, layoutStorage: layoutStorage)
         
         // Инициализируем мониторинг экранов
@@ -87,6 +83,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func configureMainWindow(windowService: WindowService, layoutStorage: LayoutStorageService) {
         self.windowService = windowService
         self.layoutStorage = layoutStorage
+        
+        // Initialize StatusBar immediately when services are configured
+        StatusBarService.shared.setup(
+            windowService: windowService,
+            layoutStorage: layoutStorage
+        )
     }
 
     func openOrCreateMainWindow() {
