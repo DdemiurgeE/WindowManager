@@ -39,13 +39,6 @@ class StatusBarService: NSObject, NSMenuDelegate {
         // Очищаем существующее меню
         menu.removeAllItems()
         
-        // 0. Snap Active Window submenu (right-click quick access)
-        let snapMenuItem = NSMenuItem(title: "Snap Active Window", action: nil, keyEquivalent: "")
-        snapMenuItem.submenu = createSnapSubmenu()
-        menu.addItem(snapMenuItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
         // 1. Список сохраненных Layout
         if let layouts = layoutStorage?.layouts, !layouts.isEmpty {
             let layoutsHeader = NSMenuItem(title: "Saved Layouts", action: nil, keyEquivalent: "")
@@ -153,98 +146,6 @@ class StatusBarService: NSObject, NSMenuDelegate {
             }
         }
     }
-    
-    // MARK: - Snap Active Window
-    
-    private func createSnapSubmenu() -> NSMenu {
-        let submenu = NSMenu(title: "Snap Active Window")
-        
-        // Halves
-        let halvesHeader = NSMenuItem(title: "Halves", action: nil, keyEquivalent: "")
-        halvesHeader.isEnabled = false
-        submenu.addItem(halvesHeader)
-        
-        submenu.addItem(NSMenuItem(title: "Left Half", action: #selector(snapLeftHalf), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Right Half", action: #selector(snapRightHalf), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Top Half", action: #selector(snapTopHalf), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Bottom Half", action: #selector(snapBottomHalf), keyEquivalent: ""))
-        
-        submenu.addItem(NSMenuItem.separator())
-        
-        // Quarters
-        let quartersHeader = NSMenuItem(title: "Quarters", action: nil, keyEquivalent: "")
-        quartersHeader.isEnabled = false
-        submenu.addItem(quartersHeader)
-        
-        submenu.addItem(NSMenuItem(title: "Top Left Quarter", action: #selector(snapTopLeftQuarter), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Top Right Quarter", action: #selector(snapTopRightQuarter), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Bottom Left Quarter", action: #selector(snapBottomLeftQuarter), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Bottom Right Quarter", action: #selector(snapBottomRightQuarter), keyEquivalent: ""))
-        
-        submenu.addItem(NSMenuItem.separator())
-        
-        // Thirds
-        let thirdsHeader = NSMenuItem(title: "Thirds", action: nil, keyEquivalent: "")
-        thirdsHeader.isEnabled = false
-        submenu.addItem(thirdsHeader)
-        
-        submenu.addItem(NSMenuItem(title: "Left Third", action: #selector(snapLeftThird), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Middle Third", action: #selector(snapMiddleThird), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Right Third", action: #selector(snapRightThird), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Left Two Thirds", action: #selector(snapLeftTwoThirds), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Right Two Thirds", action: #selector(snapRightTwoThirds), keyEquivalent: ""))
-        
-        submenu.addItem(NSMenuItem.separator())
-        
-        // Full
-        submenu.addItem(NSMenuItem(title: "Fill Usable Area", action: #selector(snapFillUsableArea), keyEquivalent: ""))
-        
-        // Set target for all action items
-        for item in submenu.items where item.action != nil {
-            item.target = self
-        }
-        
-        return submenu
-    }
-    
-    private func snapActiveWindow(to zone: SnapZone) {
-        guard let windowService else { return }
-        
-        // Get the frontmost application's focused window
-        guard let app = NSWorkspace.shared.frontmostApplication,
-              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
-            print("StatusBarService: No valid frontmost app")
-            return
-        }
-        
-        // Get current screen
-        let currentScreen = NSScreen.main ?? NSScreen.screens.first
-        guard let screen = currentScreen else {
-            print("StatusBarService: No screen found")
-            return
-        }
-        
-        // Apply snap position
-        windowService.snapActiveWindow(to: zone, on: screen)
-    }
-    
-    @objc private func snapLeftHalf() { snapActiveWindow(to: .leftHalf) }
-    @objc private func snapRightHalf() { snapActiveWindow(to: .rightHalf) }
-    @objc private func snapTopHalf() { snapActiveWindow(to: .topHalf) }
-    @objc private func snapBottomHalf() { snapActiveWindow(to: .bottomHalf) }
-    
-    @objc private func snapTopLeftQuarter() { snapActiveWindow(to: .topLeft) }
-    @objc private func snapTopRightQuarter() { snapActiveWindow(to: .topRight) }
-    @objc private func snapBottomLeftQuarter() { snapActiveWindow(to: .bottomLeft) }
-    @objc private func snapBottomRightQuarter() { snapActiveWindow(to: .bottomRight) }
-    
-    @objc private func snapLeftThird() { snapActiveWindow(to: .leftThird) }
-    @objc private func snapMiddleThird() { snapActiveWindow(to: .middleThird) }
-    @objc private func snapRightThird() { snapActiveWindow(to: .rightThird) }
-    @objc private func snapLeftTwoThirds() { snapActiveWindow(to: .leftTwoThirds) }
-    @objc private func snapRightTwoThirds() { snapActiveWindow(to: .rightTwoThirds) }
-    
-    @objc private func snapFillUsableArea() { snapActiveWindow(to: .maximize) }
     
     @objc private func quitApp() {
         print("StatusBarService: quitApp called")
