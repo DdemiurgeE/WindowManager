@@ -1,5 +1,12 @@
 # WindowManager release model
 
+## Current source (after v3.2)
+
+The experimental Snap Windows panel, drag-to-edge monitor, and menu-bar snap
+commands have been removed. Saving and restoring named layouts remain available,
+including overwriting an existing layout. The v3.2 section below describes the
+historical release, not the current source or a new published update.
+
 ## v3.2 — per-display snapping (build 10; synthetic tests passed; live drag-to-edge UX pending user approval)
 
 The main window now offers **Snap Windows**: refresh available windows, select an
