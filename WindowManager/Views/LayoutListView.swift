@@ -30,6 +30,24 @@ struct LayoutListView: View {
     
     var body: some View {
         VStack {
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button("Export Backup…", systemImage: "square.and.arrow.up") {
+                    showingExportWarning = true
+                }
+                .accessibilityLabel("Export backup of all saved layouts")
+                .help("Save all layouts as a local JSON backup")
+
+                Button("Import Backup…", systemImage: "square.and.arrow.down") {
+                    importBackup()
+                }
+                .accessibilityLabel("Choose a local JSON backup to preview for import")
+                .help("Import layouts from a local JSON backup")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.bordered)
+            .padding(.horizontal)
+
             if layoutStorage.layouts.isEmpty {
                 VStack(spacing: 20) {
                     Image(systemName: "rectangle.stack")
@@ -93,25 +111,6 @@ struct LayoutListView: View {
                     .id(windowService.restoreResultRevision)
                     .padding(.horizontal)
                     .padding(.bottom, 8)
-            }
-        }
-        .navigationTitle("Saved Layouts")
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Button("Export Backup…", systemImage: "square.and.arrow.up") {
-                    showingExportWarning = true
-                }
-                .accessibilityLabel("Export backup of all saved layouts")
-                .help("Save all layouts as a local JSON backup")
-            }
-            ToolbarItem(placement: .automatic) {
-                Button("Import Backup…", systemImage: "square.and.arrow.down") { importBackup() }
-                    .accessibilityLabel("Choose a local JSON backup to preview for import")
-            }
-            ToolbarItem(placement: .automatic) {
-                Text("\(layoutStorage.layouts.count) layouts")
-                    .foregroundColor(.secondary)
-                    .font(.caption)
             }
         }
         .confirmationDialog("Export all saved layouts?", isPresented: $showingExportWarning) {
