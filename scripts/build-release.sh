@@ -48,5 +48,3 @@ hdiutil create -volname "WindowManager ${VERSION}" -srcfolder "$CLEAN_APP" -ov -
 
 (cd "$OUTPUT_DIR" && shasum -a 256 "WindowManager-${VERSION}.zip" "WindowManager-${VERSION}.dmg" > SHA256SUMS)
 printf 'Built WindowManager %s (%s) in %s\n' "$VERSION" "$BUILD" "$OUTPUT_DIR"
-# Disable automatic updates by default (user can enable manually if needed)
-/usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks false" "$APP/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :SUEnableAutomaticChecks bool false" "$APP/Contents/Info.plist" 2>/dev/null || true

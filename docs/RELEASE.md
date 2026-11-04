@@ -1,5 +1,16 @@
 # WindowManager release model
 
+## v3.2.1 — layout UI cleanup (build 12)
+
+Removed the experimental Snap Windows panel, drag-to-edge observer, and menu-bar
+snap commands. Saved layout capture, overwrite, restore, backup export/import,
+and Auto-apply remain available. Backup controls now sit inside the Saved
+Layouts section instead of a cramped window toolbar; the duplicated toolbar
+count is gone. Automatic background update checks remain off, but manual Check
+for Updates remains available. The release is distributed with an ad-hoc code
+signature; live Sparkle installation and Gatekeeper acceptance are not proven by
+synthetic tests. Existing layouts and macOS display/window settings are untouched.
+
 ## Current source (after v3.2)
 
 The experimental Snap Windows panel, drag-to-edge monitor, and menu-bar snap

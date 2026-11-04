@@ -7,7 +7,7 @@
 	<key>SUAutomaticallyUpdate</key>
 	<false/>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<false/>
 	<key>SUFeedURL</key>
 	<string>https://ddemiurgee.github.io/WindowManager/appcast.xml</string>
 	<key>SUPublicEDKey</key>

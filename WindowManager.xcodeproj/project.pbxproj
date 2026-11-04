@@ -458,7 +458,7 @@
 				<key>COMBINE_HIDPI_IMAGES</key>
 				<string>YES</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>11</string>
+				<string>12</string>
 				<key>DEVELOPMENT_TEAM</key>
 				<string>P96R53984B</string>
 				<key>ENABLE_APP_SANDBOX</key>
@@ -495,7 +495,7 @@
 					<string>@executable_path/../Frameworks</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>3.2</string>
+				<string>3.2.1</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>obelisk.WindowManager</string>
 				<key>PRODUCT_NAME</key>
@@ -547,7 +547,7 @@
 				<key>COMBINE_HIDPI_IMAGES</key>
 				<string>YES</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>11</string>
+				<string>12</string>
 				<key>DEBUG_INFORMATION_FORMAT</key>
 				<string>dwarf</string>
 				<key>DEVELOPMENT_TEAM</key>
@@ -586,7 +586,7 @@
 					<string>@executable_path/../Frameworks</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>3.2</string>
+				<string>3.2.1</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>obelisk.WindowManager</string>
 				<key>PRODUCT_NAME</key>
