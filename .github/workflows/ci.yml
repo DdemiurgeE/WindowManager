@@ -49,3 +49,4 @@ jobs:
           scripts/run-legacy-json-fixture-test.sh
           scripts/run-layout-backup-export-tests.sh
           scripts/run-layout-import-tests.sh
+          scripts/run-save-selection-tests.sh

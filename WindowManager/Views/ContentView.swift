@@ -306,15 +306,31 @@ struct ContentView: View {
     }
 
     private func saveLayout(action: SaveAction) {
+        let selectedIDs: Set<UUID>
+        switch action {
+        case .newLayout(_, let ids), .overwriteLayout(_, _, let ids, _):
+            selectedIDs = ids
+        }
+        let capturedIDs = Set(currentWindows.map(\.id))
+        guard !selectedIDs.isEmpty, selectedIDs.isSubset(of: capturedIDs),
+              capturedIDs.count == currentWindows.count else {
+            showingStorageError = true
+            return
+        }
+        let selected = currentWindows.filter { selectedIDs.contains($0.id) }
         let screenConfig = windowService.getCurrentScreenConfiguration()
-        
+
         do {
             switch action {
-            case .newLayout(let name):
-                let layout = Layout(name: name, windows: currentWindows, screenConfiguration: screenConfig)
+            case .newLayout(let name, _):
+                let layout = Layout(name: name, windows: selected, screenConfiguration: screenConfig)
                 try layoutStorage.saveLayout(layout)
                 
-            case .overwriteLayout(let id, let name):
+            case .overwriteLayout(let id, let name, _, let confirmed):
+                guard selected.count == currentWindows.count || confirmed else {
+                    showingStorageError = true
+                    return
+                }
                 // Find existing layout and update it with new windows, preserving ID
                 guard let existingLayout = layoutStorage.layouts.first(where: { $0.id == id }) else {
                     showingStorageError = true
@@ -324,7 +340,7 @@ struct ContentView: View {
                 let updatedLayout = Layout(
                     id: existingLayout.id,
                     name: name,
-                    windows: currentWindows,
+                    windows: selected,
                     createdAt: existingLayout.createdAt,
                     lastUsed: existingLayout.lastUsed,
                     screenConfiguration: screenConfig
@@ -359,8 +375,8 @@ enum SaveMode: String, CaseIterable {
 }
 
 enum SaveAction {
-    case newLayout(name: String)
-    case overwriteLayout(id: UUID, name: String)
+    case newLayout(name: String, selectedIDs: Set<UUID>)
+    case overwriteLayout(id: UUID, name: String, selectedIDs: Set<UUID>, partialOverwriteConfirmed: Bool = false)
 }
 
 struct SaveLayoutSheet: View {
@@ -374,6 +390,49 @@ struct SaveLayoutSheet: View {
     @State private var selectedWindows: Set<UUID> = []
     @State private var saveMode: SaveMode = .new
     @State private var selectedLayoutID: UUID?
+    @State private var pendingOverwrite: SaveAction?
+    @State private var overwriteMessage = ""
+    @State private var showingOverwriteConfirmation = false
+
+    // BEGIN SAVE SELECTION HANDLERS
+    private var canSave: Bool {
+        let capturedIDs = Set(windows.map(\.id))
+        return !layoutName.isEmpty && !selectedWindows.isEmpty &&
+            selectedWindows.isSubset(of: capturedIDs) && capturedIDs.count == windows.count &&
+            (saveMode == .new || existingLayouts.contains { $0.id == selectedLayoutID })
+    }
+
+    private func requestSave() {
+        guard canSave else { return }
+        switch saveMode {
+        case .new:
+            onSave(.newLayout(name: layoutName, selectedIDs: selectedWindows))
+        case .overwrite:
+            guard let id = selectedLayoutID,
+                  let destination = existingLayouts.first(where: { $0.id == id }) else { return }
+            let action = SaveAction.overwriteLayout(id: id, name: destination.name, selectedIDs: selectedWindows)
+            if selectedWindows.count < windows.count {
+                pendingOverwrite = action
+                overwriteMessage = "Replace all \(destination.windows.count) saved windows in ‘\(destination.name)’ with \(selectedWindows.count) of \(windows.count) captured windows? Unselected windows will not be saved; existing windows will not be merged."
+                showingOverwriteConfirmation = true
+            } else {
+                onSave(action)
+            }
+        }
+    }
+
+    private func confirmOverwrite() {
+        guard case let .overwriteLayout(id, name, ids, _) = pendingOverwrite else { return }
+        pendingOverwrite = nil
+        showingOverwriteConfirmation = false
+        onSave(.overwriteLayout(id: id, name: name, selectedIDs: ids, partialOverwriteConfirmed: true))
+    }
+
+    private func cancelOverwrite() {
+        pendingOverwrite = nil
+        showingOverwriteConfirmation = false
+    }
+    // END SAVE SELECTION HANDLERS
 
     var body: some View {
         VStack(spacing: 20) {
@@ -473,7 +532,7 @@ struct SaveLayoutSheet: View {
 
                     // Windows preview
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("Windows to Save (\(windows.count))", systemImage: "macwindow.on.rectangle")
+                        Label("Windows to Save (\(selectedWindows.count) of \(windows.count))", systemImage: "macwindow.on.rectangle")
                             .font(.headline)
 
                         if windows.isEmpty {
@@ -484,7 +543,13 @@ struct SaveLayoutSheet: View {
                         } else {
                             VStack(spacing: 8) {
                                 ForEach(windows) { window in
-                                    WindowPreviewRow(window: window)
+                                    WindowPreviewRow(window: window, isSelected: Binding(
+                                        get: { selectedWindows.contains(window.id) },
+                                        set: { selected in
+                                            if selected { selectedWindows.insert(window.id) }
+                                            else { selectedWindows.remove(window.id) }
+                                        }
+                                    ))
                                 }
                             }
                         }
@@ -505,21 +570,21 @@ struct SaveLayoutSheet: View {
                 Spacer()
 
                 Button("Save Layout") {
-                    if !layoutName.isEmpty {
-                        if saveMode == .overwrite, let id = selectedLayoutID {
-                            onSave(.overwriteLayout(id: id, name: layoutName))
-                        } else {
-                            onSave(.newLayout(name: layoutName))
-                        }
-                    }
+                    requestSave()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(layoutName.isEmpty || (saveMode == .overwrite && selectedLayoutID == nil))
+                .disabled(!canSave)
                 .keyboardShortcut(.defaultAction)
             }
             .padding()
         }
         .frame(width: 600, height: 500)
+        .alert("Overwrite selected layout?", isPresented: $showingOverwriteConfirmation) {
+            Button("Cancel", role: .cancel) { cancelOverwrite() }
+            Button("Replace Windows", role: .destructive) { confirmOverwrite() }
+        } message: {
+            Text(overwriteMessage)
+        }
         .onAppear {
             selectedWindows = Set(windows.map { $0.id })
         }
@@ -530,9 +595,13 @@ struct SaveLayoutSheet: View {
 
 struct WindowPreviewRow: View {
     let window: WindowInfo
+    @Binding var isSelected: Bool
 
     var body: some View {
         HStack(spacing: 12) {
+            Toggle(isOn: $isSelected) { EmptyView() }
+                .toggleStyle(.checkbox)
+                .accessibilityLabel("Save \(window.appName) window: \(window.windowTitle.isEmpty ? "Untitled" : window.windowTitle)")
             // App icon placeholder
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
