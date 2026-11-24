@@ -40,6 +40,7 @@ jobs:
           scripts/run-coordinate-tests.sh
           scripts/run-fake-ax-tests.sh
           scripts/run-native-fullscreen-tests.sh
+          scripts/run-window-service-integration-tests.sh
           scripts/run-restore-planner-tests.sh
           scripts/run-restore-preview-tests.sh
           scripts/run-restore-plan-result-mapping-tests.sh

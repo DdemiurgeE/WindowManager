@@ -17,6 +17,7 @@ struct NativeFullscreenRestoreEngine {
                  onTargetDisplay: @escaping () -> Result<Bool, NativeFullscreenFailure>,
                  settled: @escaping () -> Result<Bool, NativeFullscreenFailure> = { .success(true) },
                  restoreFrame: @escaping () -> Status,
+                 verifyFrame: @escaping () -> Status,
                  schedule: @escaping (@escaping () -> Void) -> Void,
                  shouldContinue: @escaping () -> Bool,
                  completion: @escaping (Status) -> Void) {
@@ -80,7 +81,16 @@ struct NativeFullscreenRestoreEngine {
             case .success(false): completion(.fullscreenDisplayMismatch)
             case .success(true):
                 if desired == true { transition(true) { verifyDisplay(.positionSet) } }
-                else { poll(false, remaining: pollLimit) { verifyDisplay(result) } }
+                else {
+                    poll(false, remaining: pollLimit) {
+                        guard active() else { return }
+                        // Settled means no longer changing, not that the frame
+                        // still matches the target accepted before animation.
+                        let final = verifyFrame()
+                        guard final == .positionSet || final == .appImposedClamp else { completion(final); return }
+                        verifyDisplay(final)
+                    }
+                }
             }
         }
         guard active() else { return }

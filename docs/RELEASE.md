@@ -11,6 +11,12 @@ monitor, enter, verify. Already-fullscreen windows on the right monitor are not
 toggled. Unsupported, read/write, timeout and wrong-display outcomes remain
 explicit failures in diagnostics/copies and retry, never geometry-only successes.
 Pending callbacks and auto retries cannot overwrite a newer restore.
+Final windowed geometry is compared with its target after animation settling,
+not inferred from stable-but-wrong frames. A permission-denied partial retry
+preserves unaffected successful rows and full-layout diagnostic totals.
+`scripts/run-window-service-integration-tests.sh` exercises the production
+restore/retry lifecycle with fake AX and a fake permission gate; only read-only
+AppKit app/display snapshots are required, with no live window or settings writes.
 
 No private Spaces APIs are used. Exact Space identity or ordering is not
 restored. Apps may deny AX fullscreen, and animations can switch the active

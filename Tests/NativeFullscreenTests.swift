@@ -58,7 +58,7 @@ private final class FakeAX: AXWindowClient {
                 precondition(!self.state || desired == nil, "Geometry must follow verified fullscreen exit")
                 self.events.append("geometry"); self.onDisplay = true
                 return self.frameStatus
-            }, schedule: { self.queue.append($0) },
+            }, verifyFrame: { self.frameStatus }, schedule: { self.queue.append($0) },
             shouldContinue: { self.active }, completion: { self.status = $0; self.completions += 1 })
     }
     func tick() {

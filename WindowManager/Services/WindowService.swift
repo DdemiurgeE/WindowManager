@@ -316,14 +316,6 @@ class WindowService: ObservableObject {
         }
         let previous = lastRestoreResult
         let targets = windowIDs.map { ids in layout.windows.filter { ids.contains($0.id) } } ?? layout.windows
-        guard PermissionsService.shared.checkAccessibilityPermission() else {
-            print("No accessibility permission")
-            completion(record(RestoreResult(layoutID: layout.id, layoutName: layout.name,
-                windowsResults: targets.map { WindowRestoreResult(id: $0.id, appName: $0.appName, windowTitle: $0.windowTitle, status: .axFailure) })))
-            return
-        }
-        let (plan, elements) = makeRestorePlan(layout: layout, targets: targets)
-        isRestoring = true
         var results: [WindowRestoreResult] = []
         func finish() {
             guard self.restoreGeneration == generation else { return }
@@ -334,6 +326,16 @@ class WindowService: ObservableObject {
             }
             completion(self.record(result))
         }
+        guard PermissionsService.shared.checkAccessibilityPermission() else {
+            print("No accessibility permission")
+            results = targets.map {
+                WindowRestoreResult(id: $0.id, appName: $0.appName, windowTitle: $0.windowTitle, status: .axFailure)
+            }
+            finish()
+            return
+        }
+        let (plan, elements) = makeRestorePlan(layout: layout, targets: targets)
+        isRestoring = true
         func superseded(from index: Int) {
             guard self.restoreGeneration == generation else { return }
             results.append(contentsOf: plan.items[index...].map {
@@ -377,6 +379,7 @@ class WindowService: ObservableObject {
                     return .success(previousTransitionFrame == frame)
                 },
                 restoreFrame: { self.setWindowFrame(element, frame: frame, shouldContinue: active) },
+                verifyFrame: { self.verifyWindowFrame(element, frame: frame) },
                 schedule: { work in DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work) },
                 shouldContinue: active,
                 completion: { status in
@@ -529,6 +532,17 @@ class WindowService: ObservableObject {
         return resolved.frame
     }
     
+    /// Final read-only comparison after native-false animation settling. Never
+    /// reuse the synchronous write outcome or correct an app-imposed late clamp.
+    private func verifyWindowFrame(_ element: AnyObject, frame: CGRect) -> WindowRestoreResult.WindowRestoreStatus {
+        guard let converter = coordinateConverter else { return .coordinateUnavailable }
+        guard case .success(let position) = axClient.position(of: element),
+              case .success(let size) = axClient.size(of: element) else { return .axFailure }
+        let actual = WindowFrameReadback(position: position, size: size)
+        return FrameRestoreEngine().matches(actual, position: converter.screenFrameToAXOrigin(frame), size: frame.size)
+            ? .positionSet : .appImposedClamp
+    }
+
     private func setWindowFrame(_ windowElement: AnyObject, frame: CGRect, shouldContinue: @escaping () -> Bool = { true }) -> WindowRestoreResult.WindowRestoreStatus {
         guard let coordinateConverter else { return .coordinateUnavailable }
         let expectedPosition = coordinateConverter.screenFrameToAXOrigin(frame)
