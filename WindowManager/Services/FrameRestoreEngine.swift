@@ -84,7 +84,7 @@ struct FrameRestoreEngine {
         return matches(final, position: position, size: size) ? .exact : .appImposedClamp
     }
 
-    private func matches(_ value: WindowFrameReadback, position: CGPoint, size: CGSize) -> Bool {
+    func matches(_ value: WindowFrameReadback, position: CGPoint, size: CGSize) -> Bool {
         matchesPosition(value.position, position: position) &&
             abs(value.size.width - size.width) <= tolerance &&
             abs(value.size.height - size.height) <= tolerance

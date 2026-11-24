@@ -42,7 +42,8 @@ The first confirmed import stages old and incoming layouts in one `Transactional
 | `relativeFrame` | Optional normalized frame relative to the captured display |
 | `screenID` | Optional current-observation display identifier |
 | `savedDisplayFrame`, `savedVisibleFrame` | Display geometry captured with the window |
-| `preservePresentation` | Whether fullscreen/maximized-style presentation should avoid resolver clamping |
+| `preservePresentation` | Geometric fill/maximize heuristic for resolver clamping, not native fullscreen |
+| `nativeFullscreen` | Optional actual AXFullScreen Boolean; nil means unreadable or legacy |
 | `savedScale` | Optional captured backing scale |
 | `screenIndex` | Captured display index, retained as a legacy fallback |
 | `timestamp` | Capture time |
@@ -81,7 +82,7 @@ AX/Quartz uses a top-left, downward-growing Y axis while `NSScreen` uses a botto
 
 ## Restoring a layout
 
-`WindowService.restoreLayout(_:, windowIDs:)` can restore all windows or only the supplied UUID subset. It returns a `RestoreResult`, including one `WindowRestoreResult` per requested target when the result can be determined. A partial retry therefore retains stable IDs instead of relying on array positions.
+`WindowService.restoreLayout(_:, windowIDs:)` can restore all windows or only the supplied UUID subset. It delivers a `RestoreResult` through its completion after asynchronous verification, including one `WindowRestoreResult` per requested target when the result can be determined. A partial retry therefore retains stable IDs instead of relying on array positions.
 
 For each target, the service:
 
@@ -104,7 +105,7 @@ An exact absolute frame is used only when saved display frame, visible frame, sc
 
 ### AX frame write and read-back
 
-`FrameRestoreEngine` writes position, waits briefly, writes size, waits briefly, writes position again, and reads position and size back. A bounded drift correction is performed when needed. The result is one of:
+`FrameRestoreEngine` writes position and size, then reads both back. Only position drift permits one additional position write/read-back; there are no blocking sleeps. The result is one of:
 
 - `positionSet`: read-back matches the target;
 - `appImposedClamp`: the app accepted the operation but retained a different frame;
@@ -117,7 +118,7 @@ An exact absolute frame is used only when saved display frame, visible frame, sc
 
 ## Automatic apply lifecycle
 
-`ScreenMonitorService` observes `NSApplication.didChangeScreenParametersNotification` with a 0.5-second debounce. Every new topology event cancels pending stability work, retries, and pending notification state.
+`ScreenMonitorService` observes `NSApplication.didChangeScreenParametersNotification` with a 0.5-second debounce. Physical identity/frame/scale changes cancel pending stability work, retries, and pending notification state; fullscreen/Dock-only visible-frame changes do not restart restoration.
 
 When Auto-apply is enabled (the `UserDefaults` key is `autoApplyEnabled`, default `true`):
 
@@ -175,3 +176,30 @@ xcodebuild \
 - User-configurable exclusions and keyboard shortcuts.
 - A visual layout preview.
 - A verified composite display fingerprint, if a stable cross-version API becomes available.
+
+## Native fullscreen transitions (v3.3)
+
+`AXWindowClient` exposes typed fullscreen reads, writability and writes; the system
+bridge validates CFBoolean values and preserves unsupported/read/write errors.
+`NativeFullscreenRestoreEngine` consumes these closures and a scheduler. Its
+bounded exit → stable state/frame → geometry → enter → readback/display sequence
+runs serially per layout, using 0.25-second main-queue scheduling, not blocking
+sleeps. Two matching polls plus stable frame observations gate animation progress.
+A false capture exits fullscreen; nil uses legacy geometry-only semantics. Capture
+never derives native state from `preservePresentation`. Recapture legacy layouts.
+
+`WindowService` owns a generation token and checks it, the topology (identity,
+frame and scale, excluding Dock/menu-bar visible-frame changes), and optional
+Auto-apply predicate before every asynchronous continuation/AX write. A newer
+request invalidates old callbacks without letting them publish over the new result.
+Auto-apply waits for completion before retries/notifications; queued retries are
+also bound to the WindowService generation, so they cannot overwrite a newer
+manual restore. Final fullscreen failures override geometric success and appear
+in compact, copied, detailed and retry mappings. Preview uses the same resolver
+and labels the desired native state, but is not a guarantee of app capability.
+
+No private Spaces API, exact Space identity or ordering is supported. Synthetic
+fake-AX coverage (`scripts/run-native-fullscreen-tests.sh`) does not prove live
+animation, Space switching or app-specific multi-monitor behavior. Live UX is
+untested; the user will test after release. No installed app, real windows,
+displays, layouts or settings were changed by automated validation.

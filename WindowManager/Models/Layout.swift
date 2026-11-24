@@ -45,6 +45,15 @@ struct ScreenConfiguration: Codable, Equatable {
         screenIDs == current.screenIDs
     }
 
+    /// Fullscreen/Space switching can change visibleFrame without any monitor
+    /// change. Do not cancel/restart our own restore for Dock/menu-bar changes.
+    func hasSamePhysicalTopology(as other: ScreenConfiguration) -> Bool {
+        screenIDs == other.screenIDs && screens.count == other.screens.count &&
+            zip(screens, other.screens).allSatisfy {
+                $0.id == $1.id && $0.frame == $1.frame && $0.scale == $1.scale
+            }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case screenIDs, screenCount, screens
     }

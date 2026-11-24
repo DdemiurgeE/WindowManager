@@ -55,6 +55,32 @@ The display resolver prefers a unique usable observed display ID, then the saved
 
 Restore results are based on Accessibility writes and read-back. A window can be reported as `positionSet`, `appImposedClamp`, `axFailure`, `restoreSuperseded`, `coordinateUnavailable`, `appNotFound`, or `windowSkipped`, among other matching statuses. Only `positionSet` contributes to the restored-window count.
 
+### Native macOS fullscreen (v3.3)
+
+New captures store the actual Accessibility `AXFullScreen` state separately from
+maximized/fill-screen geometry (`preservePresentation`). `true` and `false` are
+explicit; missing/unreadable state is unknown, not false. **Recapture legacy
+layouts** to restore native fullscreen; existing layouts still load and restore
+geometry only. Backups preserve the optional Boolean without a schema migration.
+Preview identifies fullscreen on/off or unknown before Apply.
+
+Manual restore, menu-bar Apply, Auto-apply and retry share an asynchronous restore
+path. It resolves the saved physical display, exits fullscreen when necessary,
+waits for state and geometry to settle, moves/resizes, then enters fullscreen and
+verifies the state and actual display. A fullscreen window already on the correct
+display is not toggled. Polling is bounded (0.25-second scheduling; 32 retries per
+transition), never a sleep on the main thread. A newer restore/topology change
+invalidates pending writes; disabling Auto-apply stops its active continuations.
+
+Unsupported attributes, read/write failures, timeouts and display mismatches are
+reported separately in diagnostics and copied summaries and remain retryable.
+Geometry success alone is not fullscreen success. Apps may refuse fullscreen or
+hide windows from Accessibility. No private Spaces API is used: **exact Space
+identity or ordering is not restored**. Fullscreen animations can visibly change
+the active Space. Live multi-display/Accessibility UX has **not yet been tested**;
+the user will perform manual acceptance after release. Automated tests use fake AX
+only and do not rearrange real windows, displays or saved layouts.
+
 ### Exporting a backup
 
 In **Saved Layouts**, select **Export Backup…**, read the privacy warning, and choose a local destination. The versioned JSON envelope contains all saved layouts, including private window titles, app names, geometry, display metadata, IDs and ISO-8601 dates. Treat it as private; WindowManager does not upload it. An empty list exports `"layouts": []`. Cancel leaves the destination untouched; a failed export does not change saved layouts. Keep a separate copy of any backup you overwrite.
@@ -95,8 +121,8 @@ Current project settings:
 - Scheme: `WindowManager`
 - Bundle ID: `obelisk.WindowManager`
 - Swift: `5.0`
-- Marketing version: `2.9`
-- Build: `7`
+- Marketing version: `3.3`
+- Build: `13`
 - macOS deployment target: `26.2`
 
 ## Building from source

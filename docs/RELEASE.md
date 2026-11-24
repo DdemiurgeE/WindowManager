@@ -1,5 +1,41 @@
 # WindowManager release model
 
+## v3.3 — native macOS fullscreen (build 13; source candidate)
+
+New captures save real `AXFullScreen` true/false separately from geometric
+maximization. Unknown/unavailable reads remain unknown. Legacy layouts and
+backups remain readable, but **recapture is required to restore native
+fullscreen**. Manual/menu-bar/Auto-apply/retry now share asynchronous bounded
+state and frame read-back: exit if needed, restore onto the saved physical
+monitor, enter, verify. Already-fullscreen windows on the right monitor are not
+toggled. Unsupported, read/write, timeout and wrong-display outcomes remain
+explicit failures in diagnostics/copies and retry, never geometry-only successes.
+Pending callbacks and auto retries cannot overwrite a newer restore.
+Final windowed geometry is compared with its target after animation settling,
+not inferred from stable-but-wrong frames. A permission-denied partial retry
+preserves unaffected successful rows and full-layout diagnostic totals.
+`scripts/run-window-service-integration-tests.sh` exercises the production
+restore/retry lifecycle with fake AX and a fake permission gate; only read-only
+AppKit app/display snapshots are required, with no live window or settings writes.
+
+No private Spaces APIs are used. Exact Space identity or ordering is not
+restored. Apps may deny AX fullscreen, and animations can switch the active
+Space. Deterministic tests use fake AX; **live UX has not yet been tested**.
+The user will manually test multi-monitor/fullscreen behavior after release.
+Automated checks must not launch/install the app, rearrange real windows or
+displays, change saved layouts/settings, or access signing private keys.
+
+Новые снимки сохраняют реальный AXFullScreen отдельно от максимизации.
+Старые раскладки нужно пересохранить для восстановления fullscreen; старый JSON
+остаётся читаемым. Точный Space и порядок Spaces не восстанавливаются.
+Живой UX пока не проверен; пользователь проверит его вручную после выпуска.
+
+Source metadata only: `MARKETING_VERSION=3.3`, `CURRENT_PROJECT_VERSION=13`.
+No generated archives, appcast, tags or published assets are changed by this
+implementation commit. Parent PM owns independent exact-SHA QA/build, merge,
+GitHub release and signed-feed publication; this section is not publication proof.
+
+
 ## v3.2.1 — layout UI cleanup (build 12)
 
 Removed the experimental Snap Windows panel, drag-to-edge observer, and menu-bar
@@ -11,7 +47,7 @@ for Updates remains available. The release is distributed with an ad-hoc code
 signature; live Sparkle installation and Gatekeeper acceptance are not proven by
 synthetic tests. Existing layouts and macOS display/window settings are untouched.
 
-## Current source (after v3.2)
+## Historical source cleanup (after v3.2)
 
 The experimental Snap Windows panel, drag-to-edge monitor, and menu-bar snap
 commands have been removed. Saving and restoring named layouts remain available,
@@ -140,10 +176,11 @@ stored in `CURRENT_PROJECT_VERSION`. A release tag must be `v<marketing version>
 ./scripts/build-release.sh
 ```
 
-The script builds a Release archive without a developer certificate, strips
-macOS extended attributes, and produces a ZIP, DMG, and `SHA256SUMS` in `dist/`.
-For public distribution, configure Developer ID signing and notarization in CI;
-the unsigned local build is intended for smoke testing only.
+The script builds the Release application without a developer certificate, strips
+macOS extended attributes, applies an ad-hoc signature, verifies it, and produces
+a ZIP, DMG, and `SHA256SUMS` in `dist/`. It is not notarized. Developer ID signing
+and notarization would be a separate distribution-model change, not a property
+of these scripts.
 
 ## GitHub release
 
@@ -157,9 +194,10 @@ Release for the tag. It must be run from a clean, reviewed commit.
 
 ## Automatic updates
 
-The app advertises the GitHub Pages appcast URL through `SUFeedURL` and enables
-automatic checks. The appcast must be generated and signed with Sparkle's
-`generate_appcast` using the release ZIP and the repository's EdDSA private key.
+The app advertises the GitHub Pages appcast URL through `SUFeedURL`; automatic
+background checks remain off and manual Check for Updates remains available.
+The project generator invokes Sparkle `sign_update` on the exact release ZIP and
+updates the XML using the matching app bundle's version/build. It uses the EdDSA private key.
 The private key remains in the local macOS Keychain under the Sparkle `ed25519`
 account and must never be committed or uploaded to GitHub. GitHub Pages is
 configured for the `main` branch `/docs` source.
@@ -177,7 +215,7 @@ After uploading the ZIP to a GitHub Release, generate and publish the feed
 locally from the Keychain:
 
 ```bash
-./scripts/generate-appcast.sh 2.3 v2.3
+./scripts/generate-appcast.sh 3.3 v3.3
 git add docs/appcast.xml
 git commit -m "chore: update Sparkle appcast"
 git push origin main

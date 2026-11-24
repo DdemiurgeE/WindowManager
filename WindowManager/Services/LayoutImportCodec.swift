@@ -178,7 +178,7 @@ enum LayoutImportCodec {
 
     private static func window(_ value: Any, screenCount: Int?) throws {
         guard let window = value as? [String: Any] else { throw ImportError.invalid }
-        try keys(window, required: ["id", "appName", "windowTitle", "frame", "screenIndex", "timestamp"], optional: ["bundleIdentifier", "axRole", "axSubrole", "relativeFrame", "screenID", "savedDisplayFrame", "savedVisibleFrame", "preservePresentation", "savedScale"])
+        try keys(window, required: ["id", "appName", "windowTitle", "frame", "screenIndex", "timestamp"], optional: ["bundleIdentifier", "axRole", "axSubrole", "relativeFrame", "screenID", "savedDisplayFrame", "savedVisibleFrame", "preservePresentation", "savedScale", "nativeFullscreen"])
         try uuid(window["id"]); try text(window["appName"], max: 512)
         try text(window["windowTitle"], max: 4096)
         try date(window["timestamp"])
@@ -194,8 +194,10 @@ enum LayoutImportCodec {
             }
         }
         if let scale = window["savedScale"], !(scale is NSNull) { _ = try number(scale, positive: true) }
-        if let presentation = window["preservePresentation"], !(presentation is NSNull) {
-            guard let bool = presentation as? NSNumber, CFGetTypeID(bool) == CFBooleanGetTypeID() else { throw ImportError.invalid }
+        for key in ["preservePresentation", "nativeFullscreen"] {
+            if let presentation = window[key], !(presentation is NSNull) {
+                guard let bool = presentation as? NSNumber, CFGetTypeID(bool) == CFBooleanGetTypeID() else { throw ImportError.invalid }
+            }
         }
     }
 

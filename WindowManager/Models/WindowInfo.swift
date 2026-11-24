@@ -31,14 +31,17 @@ struct WindowInfo: Codable, Identifiable {
     let savedDisplayFrame: CGRect?
     /// The usable area captured with the frame (menu bar/Dock included).
     let savedVisibleFrame: CGRect?
-    /// Fullscreen/maximized windows must not be silently resized by fallback policy.
+    /// Geometric maximized/fill-screen heuristic for fallback sizing only.
+    /// Not a substitute for the independent native AXFullScreen state.
     let preservePresentation: Bool?
+    /// Actual AXFullScreen state; nil means legacy or unreadable, never false.
+    let nativeFullscreen: Bool?
     let savedScale: CGFloat?
 
     let screenIndex: Int
     let timestamp: Date
 
-    init(id: UUID = UUID(), appName: String, windowTitle: String, frame: CGRect, screenIndex: Int, relativeFrame: CGRect? = nil, screenID: String? = nil, bundleIdentifier: String? = nil, axRole: String? = nil, axSubrole: String? = nil, savedDisplayFrame: CGRect? = nil, savedVisibleFrame: CGRect? = nil, preservePresentation: Bool? = nil, savedScale: CGFloat? = nil) {
+    init(id: UUID = UUID(), appName: String, windowTitle: String, frame: CGRect, screenIndex: Int, relativeFrame: CGRect? = nil, screenID: String? = nil, bundleIdentifier: String? = nil, axRole: String? = nil, axSubrole: String? = nil, savedDisplayFrame: CGRect? = nil, savedVisibleFrame: CGRect? = nil, preservePresentation: Bool? = nil, savedScale: CGFloat? = nil, nativeFullscreen: Bool? = nil) {
         self.id = id
         self.appName = appName
         self.bundleIdentifier = bundleIdentifier
@@ -52,12 +55,13 @@ struct WindowInfo: Codable, Identifiable {
         self.savedDisplayFrame = savedDisplayFrame
         self.savedVisibleFrame = savedVisibleFrame
         self.preservePresentation = preservePresentation
+        self.nativeFullscreen = nativeFullscreen
         self.savedScale = savedScale
         self.timestamp = Date()
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, appName, bundleIdentifier, windowTitle, axRole, axSubrole, frame, relativeFrame, screenID, savedDisplayFrame, savedVisibleFrame, preservePresentation, savedScale, screenIndex, timestamp
+        case nativeFullscreen, id, appName, bundleIdentifier, windowTitle, axRole, axSubrole, frame, relativeFrame, screenID, savedDisplayFrame, savedVisibleFrame, preservePresentation, savedScale, screenIndex, timestamp
     }
 
     init(from decoder: Decoder) throws {
@@ -74,6 +78,7 @@ struct WindowInfo: Codable, Identifiable {
         savedDisplayFrame = try values.decodeIfPresent(CGRect.self, forKey: .savedDisplayFrame)
         savedVisibleFrame = try values.decodeIfPresent(CGRect.self, forKey: .savedVisibleFrame)
         preservePresentation = try values.decodeIfPresent(Bool.self, forKey: .preservePresentation)
+        nativeFullscreen = try values.decodeIfPresent(Bool.self, forKey: .nativeFullscreen)
         savedScale = try values.decodeIfPresent(CGFloat.self, forKey: .savedScale)
         screenIndex = try values.decode(Int.self, forKey: .screenIndex)
         timestamp = try values.decode(Date.self, forKey: .timestamp)
