@@ -1,6 +1,6 @@
 # WindowManager release model
 
-## v3.3 — native macOS fullscreen (build 13; source candidate)
+## v3.3 — native macOS fullscreen (build 13; released, live acceptance pending)
 
 New captures save real `AXFullScreen` true/false separately from geometric
 maximization. Unknown/unavailable reads remain unknown. Legacy layouts and
@@ -30,10 +30,21 @@ displays, change saved layouts/settings, or access signing private keys.
 остаётся читаемым. Точный Space и порядок Spaces не восстанавливаются.
 Живой UX пока не проверен; пользователь проверит его вручную после выпуска.
 
-Source metadata only: `MARKETING_VERSION=3.3`, `CURRENT_PROJECT_VERSION=13`.
-No generated archives, appcast, tags or published assets are changed by this
-implementation commit. Parent PM owns independent exact-SHA QA/build, merge,
-GitHub release and signed-feed publication; this section is not publication proof.
+Release metadata: `MARKETING_VERSION=3.3`, `CURRENT_PROJECT_VERSION=13`.
+Independent exact-SHA QA and review passed for `d4cc12ce6dcc5cd37a1440c430eea811e8686497`:
+all 15 standalone harnesses passed, including 48 native-fullscreen and 47
+production-service integration checks; the original adversarial fixture passed
+three times with zero reproduced defects. Debug/Release builds also passed.
+PR #23 merged as `aa9b161711a338e7b19f88847f4c265a38477646`; its tree
+matches the reviewed source. PR CI run `45464485861` and post-merge CI run
+`45465127407` succeeded for both configurations. Tag `v3.3` points to that merge.
+Release workflow `45466712303` published ZIP, DMG and SHA256SUMS. The PM downloaded
+all three assets, verified their checksums, the DMG integrity, the extracted
+bundle's strict code signature and version 3.3/build 13. The appcast entry signs
+that exact downloaded ZIP (2,354,364 bytes), verified with the bundled public key.
+The signed feed is published separately from the immutable release tag; live
+feed propagation is verified as a final external gate. No installed application,
+saved layout or real window state was changed; live acceptance remains pending.
 
 
 ## v3.2.1 — layout UI cleanup (build 12)
