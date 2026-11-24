@@ -96,7 +96,11 @@ struct LayoutListView: View {
                 .listStyle(.inset)
                 .frame(height: 220)
             }
-            if let result = windowService.lastRestoreResult,
+            if windowService.isRestoring {
+                ProgressView("Restoring window state…")
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+            } else if let result = windowService.lastRestoreResult,
                layoutStorage.layouts.contains(where: { $0.id == result.layoutID }) {
                 RestoreDiagnosticsView(result: result, revision: windowService.restoreResultRevision,
                     isExpanded: windowService.restoreDiagnosticsExpanded,
@@ -227,7 +231,7 @@ struct LayoutListView: View {
 
     private func retryLayout(_ layoutID: UUID?) {
         guard let layoutID, let layout = layoutStorage.layouts.first(where: { $0.id == layoutID }) else { return }
-        guard windowService.retryMissingOrFailed(layout) != nil else { return }
+        guard windowService.retryMissingOrFailed(layout) else { return }
         do { try layoutStorage.markLayoutAsUsed(layout) } catch { reportStorageFailure() }
     }
 

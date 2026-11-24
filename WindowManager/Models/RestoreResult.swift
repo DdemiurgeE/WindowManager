@@ -26,8 +26,22 @@ struct WindowRestoreResult: Codable, Identifiable {
         case axFailure
         /// The primary display was not available for coordinate conversion.
         case coordinateUnavailable
+        /// Native AX fullscreen is unsupported or not writable.
+        case fullscreenUnsupported
+        case fullscreenReadFailure
+        case fullscreenWriteFailure
+        case fullscreenTimeout
+        case fullscreenDisplayMismatch
         /// A newer restore superseded this restore before its read-back finished.
         case restoreSuperseded
+
+        var isFullscreenFailure: Bool {
+            switch self {
+            case .fullscreenUnsupported, .fullscreenReadFailure, .fullscreenWriteFailure,
+                 .fullscreenTimeout, .fullscreenDisplayMismatch: return true
+            default: return false
+            }
+        }
     }
 
     init(id: UUID = UUID(), appName: String, windowTitle: String, status: WindowRestoreStatus) {
@@ -57,7 +71,7 @@ struct RestoreResult {
         "\(windowsRestored)/\(windowsTotal) windows restored"
     }
     var compactDiagnosticsDescription: String {
-        "Verified restored: \(windowsRestored) • Missing/skipped: \(skippedCount) • AX failures: \(accessibilityFailureCount) • App clamps: \(clampCount) • Coordinates unavailable: \(coordinateUnavailableCount)"
+        "Verified restored: \(windowsRestored) • Missing/skipped: \(skippedCount) • AX failures: \(accessibilityFailureCount) • App clamps: \(clampCount) • Coordinates unavailable: \(coordinateUnavailableCount)" + (fullscreenFailureCount > 0 ? " • " + fullscreenDiagnosticsDescription : "")
     }
 
     var skippedCount: Int {
@@ -66,6 +80,14 @@ struct RestoreResult {
 
     var accessibilityFailureCount: Int {
         windowsResults.filter { $0.status == .axFailure }.count
+    }
+
+    var fullscreenFailureCount: Int { windowsResults.filter { $0.status.isFullscreenFailure }.count }
+    var fullscreenDiagnosticsDescription: String {
+        func count(_ status: WindowRestoreResult.WindowRestoreStatus) -> Int {
+            windowsResults.filter { $0.status == status }.count
+        }
+        return "Fullscreen failures: \(fullscreenFailureCount) (unsupported \(count(.fullscreenUnsupported)); read \(count(.fullscreenReadFailure)); write \(count(.fullscreenWriteFailure)); timeout \(count(.fullscreenTimeout)); wrong display \(count(.fullscreenDisplayMismatch)))"
     }
 
     var clampCount: Int {
@@ -91,12 +113,13 @@ enum RestoreResultMapping {
         let statuses = statuses(for: results)
         return Set(windows.compactMap { window in
             guard let status = statuses[window.id] else { return window.id }
-            return status == .appNotFound || status == .windowSkipped || status == .coordinateUnavailable ? window.id : nil
+            return status == .appNotFound || status == .windowSkipped || status == .coordinateUnavailable || status.isFullscreenFailure ? window.id : nil
         })
     }
 
     static func retryableIDs(in results: [WindowRestoreResult]) -> Set<UUID> {
         Set(results.compactMap { result in
+            if result.status.isFullscreenFailure { return result.id }
             switch result.status {
             case .appNotFound, .windowSkipped, .coordinateUnavailable, .axFailure: return result.id
             default: return nil
@@ -109,6 +132,7 @@ enum RestoreResultMapping {
             "Restored: \(result.windowsRestored)/\(result.windowsTotal)",
             "Skipped or missing: \(result.skippedCount)",
             "Accessibility failures: \(result.accessibilityFailureCount)",
+            result.fullscreenDiagnosticsDescription,
             "Application clamps: \(result.clampCount)",
             "Coordinates unavailable: \(result.coordinateUnavailableCount)"
         ]

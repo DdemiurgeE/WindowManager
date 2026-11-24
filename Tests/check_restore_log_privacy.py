@@ -19,7 +19,7 @@ expected = {
     "WindowService.swift": (
         'print("[WindowRestore] No available display; using saved frame")',
         'print("[WindowRestore] Selected display index \\(resolved.display.index) via \\(resolved.selection)")',
-        'status: setWindowFrame(element, frame: frame))',
+        'restoreFrame: { self.setWindowFrame(element, frame: frame, shouldContinue: active) },',
         'let isKnownReason = message.range(of: pattern, options: .regularExpression) != nil ||',
         'let reason = isKnownReason ? message : "AX frame operation failed"',
         'print("[WindowRestore] \\(reason)")',

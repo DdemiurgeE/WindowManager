@@ -69,7 +69,7 @@ struct RestorePlanner {
                 return WindowRestorePlanItem(windowID: target.id, appName: target.appName,
                     windowTitle: target.windowTitle, chosenDisplay: targetFrame?.display,
                     targetFrame: targetFrame?.frame, candidateID: currentID,
-                    confidence: confidence, reason: "matched by deterministic identity and geometry",
+                    confidence: confidence, reason: "matched by deterministic identity and geometry; " + (target.nativeFullscreen.map { $0 ? "native fullscreen → on (AX verification required)" : "native fullscreen → off (AX verification required)" } ?? "native fullscreen unknown — recapture to restore it"),
                     skipReason: nil)
             case .matched where targetFrame == nil:
                 return skipped(target, reason: "no usable display", skip: .coordinateUnavailable)

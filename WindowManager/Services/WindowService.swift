@@ -15,8 +15,19 @@ protocol AXWindowClient {
     func subrole(of window: AnyObject) -> AXOperationResult<String>
     func position(of window: AnyObject) -> AXOperationResult<CGPoint>
     func size(of window: AnyObject) -> AXOperationResult<CGSize>
+    func fullscreen(of window: AnyObject) -> Result<Bool, NativeFullscreenFailure>
+    func fullscreenSettable(of window: AnyObject) -> Result<Bool, NativeFullscreenFailure>
+    func setFullscreen(_ value: Bool, of window: AnyObject) -> Result<Void, NativeFullscreenFailure>
     func setPosition(_ position: CGPoint, of window: AnyObject) -> AXError
     func setSize(_ size: CGSize, of window: AnyObject) -> AXError
+}
+
+// Existing clients that do not implement native fullscreen report unsupported,
+// never a fabricated false state.
+extension AXWindowClient {
+    func fullscreen(of window: AnyObject) -> Result<Bool, NativeFullscreenFailure> { .failure(.unsupported) }
+    func fullscreenSettable(of window: AnyObject) -> Result<Bool, NativeFullscreenFailure> { .failure(.unsupported) }
+    func setFullscreen(_ value: Bool, of window: AnyObject) -> Result<Void, NativeFullscreenFailure> { .failure(.unsupported) }
 }
 
 struct SystemAXWindowClient: AXWindowClient {
@@ -31,6 +42,29 @@ struct SystemAXWindowClient: AXWindowClient {
         let error = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
         guard error == .success, let elements = value as? [AXUIElement] else { return .failure(error) }
         return .success(elements.map { Handle($0) as AnyObject })
+    }
+
+    func fullscreen(of window: AnyObject) -> Result<Bool, NativeFullscreenFailure> {
+        guard let window = window as? Handle else { return .failure(.read) }
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(window.element, "AXFullScreen" as CFString, &value)
+        guard error == .success else { return .failure(error == .attributeUnsupported ? .unsupported : .read) }
+        guard let value, CFGetTypeID(value) == CFBooleanGetTypeID(), let boolean = value as? Bool else { return .failure(.read) }
+        return .success(boolean)
+    }
+
+    func fullscreenSettable(of window: AnyObject) -> Result<Bool, NativeFullscreenFailure> {
+        guard let window = window as? Handle else { return .failure(.read) }
+        var settable = DarwinBoolean(false)
+        let error = AXUIElementIsAttributeSettable(window.element, "AXFullScreen" as CFString, &settable)
+        guard error == .success else { return .failure(error == .attributeUnsupported ? .unsupported : .read) }
+        return .success(settable.boolValue)
+    }
+
+    func setFullscreen(_ value: Bool, of window: AnyObject) -> Result<Void, NativeFullscreenFailure> {
+        guard let window = window as? Handle else { return .failure(.write) }
+        let error = AXUIElementSetAttributeValue(window.element, "AXFullScreen" as CFString, value ? kCFBooleanTrue : kCFBooleanFalse)
+        return error == .success ? .success(()) : .failure(error == .attributeUnsupported ? .unsupported : .write)
     }
 
     func title(of window: AnyObject) -> AXOperationResult<String> {
@@ -98,6 +132,8 @@ class WindowService: ObservableObject {
     }
     private(set) var restoreHistory: [RestoreResult] = []
     private let maxRestoreHistoryEntries = 20
+    private(set) var restoreGeneration = UUID()
+    @Published private(set) var isRestoring = false
     private let axClient: AXWindowClient
 
     init(axClient: AXWindowClient = SystemAXWindowClient()) {
@@ -235,10 +271,21 @@ class WindowService: ObservableObject {
             savedDisplayFrame: targetScreen.frame,
             savedVisibleFrame: targetScreen.visibleFrame,
             preservePresentation: screenFrame == targetScreen.frame || screenFrame == targetScreen.visibleFrame,
-            savedScale: targetScreen.backingScaleFactor
+            savedScale: targetScreen.backingScaleFactor,
+            nativeFullscreen: capturedFullscreen(of: SystemAXWindowClient.Handle(windowElement))
         )
     }
     
+    func capturedFullscreen(of window: AnyObject) -> Bool? {
+        guard case .success(let state) = axClient.fullscreen(of: window) else { return nil }
+        return state
+    }
+
+    func cancelRestore() {
+        restoreGeneration = UUID()
+        isRestoring = false
+    }
+
     private func getScreenIndex(for frame: CGRect, screens: [NSScreen]) -> Int {
         // Находим экран с максимальной площадью пересечения с окном
         var bestIndex = 0
@@ -256,40 +303,100 @@ class WindowService: ObservableObject {
         return bestIndex
     }
     
-    @discardableResult
-    func restoreLayout(_ layout: Layout, windowIDs: Set<UUID>? = nil) -> RestoreResult {
+    func restoreLayout(_ layout: Layout, windowIDs: Set<UUID>? = nil,
+                       shouldContinue: @escaping () -> Bool = { true },
+                       completion: @escaping (RestoreResult) -> Void = { _ in }) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        cancelRestore()
+        let generation = restoreGeneration
+        let topology = getCurrentScreenConfiguration()
+        let active = {
+            self.restoreGeneration == generation && shouldContinue() &&
+                topology.hasSamePhysicalTopology(as: self.getCurrentScreenConfiguration())
+        }
+        let previous = lastRestoreResult
         let targets = windowIDs.map { ids in layout.windows.filter { ids.contains($0.id) } } ?? layout.windows
-
         guard PermissionsService.shared.checkAccessibilityPermission() else {
             print("No accessibility permission")
-            return record(RestoreResult(layoutID: layout.id, layoutName: layout.name, windowsResults: []))
+            completion(record(RestoreResult(layoutID: layout.id, layoutName: layout.name,
+                windowsResults: targets.map { WindowRestoreResult(id: $0.id, appName: $0.appName, windowTitle: $0.windowTitle, status: .axFailure) })))
+            return
         }
         let (plan, elements) = makeRestorePlan(layout: layout, targets: targets)
-        let results = plan.items.map { item -> WindowRestoreResult in
+        isRestoring = true
+        var results: [WindowRestoreResult] = []
+        func finish() {
+            guard self.restoreGeneration == generation else { return }
+            self.isRestoring = false
+            var result = RestoreResult(layoutID: layout.id, layoutName: layout.name, windowsResults: results)
+            if let previous, previous.layoutID == layout.id, windowIDs != nil {
+                result = RestoreResultMapping.merged(previous: previous, retry: result)
+            }
+            completion(self.record(result))
+        }
+        func superseded(from index: Int) {
+            guard self.restoreGeneration == generation else { return }
+            results.append(contentsOf: plan.items[index...].map {
+                WindowRestoreResult(id: $0.windowID, appName: $0.appName, windowTitle: $0.windowTitle, status: .restoreSuperseded)
+            })
+            finish()
+        }
+        func next(_ index: Int) {
+            guard active() else { superseded(from: index); return }
+            guard index < plan.items.count else { finish(); return }
+            let item = plan.items[index]
             guard let frame = item.targetFrame, let candidateID = item.candidateID,
-                  let element = elements[candidateID] else {
-                return RestorePlanResultMapping.result(forSkipped: item)
+                  let element = elements[candidateID], let display = item.chosenDisplay else {
+                results.append(RestorePlanResultMapping.result(forSkipped: item))
+                DispatchQueue.main.async { next(index + 1) }
+                return
             }
-            guard coordinateConverter != nil else {
-                return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: item.windowTitle, status: .coordinateUnavailable)
-            }
-            let title = (try? axTitle(element)) ?? item.windowTitle
-            return WindowRestoreResult(id: item.windowID, appName: item.appName, windowTitle: title,
-                status: setWindowFrame(element, frame: frame))
+            var previousTransitionFrame: WindowFrameReadback?
+            let desired = targets.first { $0.id == item.windowID }?.nativeFullscreen
+            NativeFullscreenRestoreEngine().restore(desired: desired,
+                read: { self.axClient.fullscreen(of: element) },
+                capability: { self.axClient.fullscreenSettable(of: element) },
+                write: { self.axClient.setFullscreen($0, of: element) },
+                onTargetDisplay: {
+                    // Read actual geometry, not the saved frame or a stale plan.
+                    guard let converter = self.coordinateConverter,
+                          case .success(let position) = self.axClient.position(of: element),
+                          case .success(let size) = self.axClient.size(of: element) else { return .failure(.read) }
+                    let screens = NSScreen.screens
+                    let ids = DisplayIdentity.screenIDs(for: screens)
+                    guard let displayID = display.screenID, ids.filter({ $0 == displayID }).count == 1,
+                          let index = ids.firstIndex(of: displayID) else { return .success(false) }
+                    let current = converter.axOriginToScreenFrame(axOrigin: position, size: size)
+                    return .success(self.getScreenIndex(for: current, screens: screens) == index && current.intersects(screens[index].frame))
+                },
+                settled: {
+                    guard case .success(let position) = self.axClient.position(of: element),
+                          case .success(let size) = self.axClient.size(of: element) else { return .failure(.read) }
+                    let frame = WindowFrameReadback(position: position, size: size)
+                    defer { previousTransitionFrame = frame }
+                    return .success(previousTransitionFrame == frame)
+                },
+                restoreFrame: { self.setWindowFrame(element, frame: frame, shouldContinue: active) },
+                schedule: { work in DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work) },
+                shouldContinue: active,
+                completion: { status in
+                    guard self.restoreGeneration == generation else { return }
+                    guard active() else { superseded(from: index); return }
+                    results.append(WindowRestoreResult(id: item.windowID, appName: item.appName,
+                        windowTitle: item.windowTitle, status: status))
+                    DispatchQueue.main.async { next(index + 1) }
+                })
         }
-        let result = RestoreResult(layoutID: layout.id, layoutName: layout.name, windowsResults: results)
-        if let previous = lastRestoreResult, previous.layoutID == layout.id, windowIDs != nil {
-            return record(RestoreResultMapping.merged(previous: previous, retry: result))
-        }
-        return record(result)
+        next(0)
     }
 
     @discardableResult
-    func retryMissingOrFailed(_ layout: Layout) -> RestoreResult? {
-        guard let previous = lastRestoreResult, previous.layoutID == layout.id else { return nil }
+    func retryMissingOrFailed(_ layout: Layout) -> Bool {
+        guard let previous = lastRestoreResult, previous.layoutID == layout.id else { return false }
         let ids = RestoreResultMapping.retryableIDs(in: previous.windowsResults)
-        guard !ids.isEmpty else { return nil }
-        return restoreLayout(layout, windowIDs: ids)
+        guard !ids.isEmpty else { return false }
+        restoreLayout(layout, windowIDs: ids)
+        return true
     }
 
     @discardableResult
@@ -319,11 +426,6 @@ class WindowService: ObservableObject {
 
     func dryRunRestore(_ layout: Layout, windowIDs: Set<UUID>? = nil) -> WindowRestorePlan {
         planRestore(layout, windowIDs: windowIDs)
-    }
-
-    private func axTitle(_ element: AnyObject) throws -> String {
-        guard case .success(let title) = axClient.title(of: element) else { throw NSError(domain: "WindowManager", code: 1) }
-        return title
     }
 
     private func makeRestorePlan(layout: Layout, targets: [WindowInfo]) -> (plan: WindowRestorePlan, elements: [String: AnyObject]) {
@@ -427,7 +529,7 @@ class WindowService: ObservableObject {
         return resolved.frame
     }
     
-    private func setWindowFrame(_ windowElement: AnyObject, frame: CGRect) -> WindowRestoreResult.WindowRestoreStatus {
+    private func setWindowFrame(_ windowElement: AnyObject, frame: CGRect, shouldContinue: @escaping () -> Bool = { true }) -> WindowRestoreResult.WindowRestoreStatus {
         guard let coordinateConverter else { return .coordinateUnavailable }
         let expectedPosition = coordinateConverter.screenFrameToAXOrigin(frame)
         let expectedSize = frame.size
@@ -456,6 +558,7 @@ class WindowService: ObservableObject {
                 }
                 return .success(WindowFrameReadback(position: position, size: size))
             },
+            shouldContinue: shouldContinue,
             onError: { message in
                 // Engine errors are strings; only known AX reason/code shapes may reach the console.
                 let pattern = #"^(position|size) (set|read) AXError -?[0-9]+$"#

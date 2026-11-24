@@ -58,15 +58,16 @@ class ScreenMonitorService: ObservableObject {
     
     private func handleScreenConfigurationChange() {
         print("[ScreenMonitor] Screen configuration change event received")
-        cancelPendingRestore()
-        
         let newConfiguration = getCurrentScreenConfiguration()
-        
-        // Проверяем, действительно ли конфигурация изменилась
-        guard newConfiguration != currentScreenConfiguration else {
+        // Fullscreen/Space animations may emit screen notifications and hide the
+        // Dock/menu bar. Only physical identity/frame/scale changes start work.
+        if let currentScreenConfiguration,
+           currentScreenConfiguration.hasSamePhysicalTopology(as: newConfiguration) {
+            self.currentScreenConfiguration = newConfiguration
             print("[ScreenMonitor] Screen configuration unchanged, skipping")
             return
         }
+        cancelPendingRestore()
         
         print("[ScreenMonitor] Old display count: \(currentScreenConfiguration?.screenIDs.count ?? 0)")
         print("[ScreenMonitor] New display count: \(newConfiguration.screenIDs.count)")
@@ -227,26 +228,32 @@ class ScreenMonitorService: ObservableObject {
             autoApplyRetryPolicy.beginAttempt(autoApplyEnabled: isAutoApplyEnabled)
             retryWorkItem?.cancel()
             retryWorkItem = nil
-            let restoreResult = windowService.restoreLayout(layoutToApply)
+            let generation = autoApplyRetryPolicy.generation
             try? layoutStorage.markLayoutAsUsed(layoutToApply)
-            print("[ScreenMonitor] Restore finished: \(restoreResult.windowsRestored)/\(restoreResult.windowsTotal) windows restored")
-            appendRestoreEvent(RestoreEvent(
-                layoutName: layoutToApply.name,
-                screenConfiguration: currentConfig,
-                status: .completed,
-                windowsTotal: layoutToApply.windows.count,
-                windowsRestored: restoreResult.windowsRestored
-            ))
-            let missingIDs = RestoreResultMapping.retryableMissingIDs(
-                in: layoutToApply.windows,
-                results: restoreResult.windowsResults
-            )
-            pendingNotificationLayoutName = layoutToApply.name
-            pendingNotificationStatuses = Dictionary(uniqueKeysWithValues: restoreResult.windowsResults.map { ($0.id, $0.status) })
-            if missingIDs.isEmpty {
-                finishRestoreNotification(layout: layoutToApply)
-            } else {
-                scheduleRetryIfNeeded(layout: layoutToApply, missingIDs: missingIDs, windowService: windowService)
+            windowService.restoreLayout(layoutToApply, shouldContinue: { [weak self] in
+                guard let self else { return false }
+                return self.isAutoApplyEnabled && self.autoApplyRetryPolicy.acceptsCallback(generation: generation)
+            }) { restoreResult in
+                guard self.autoApplyRetryPolicy.acceptsCallback(generation: generation) else { return }
+                print("[ScreenMonitor] Restore finished: \(restoreResult.windowsRestored)/\(restoreResult.windowsTotal) windows restored")
+                self.appendRestoreEvent(RestoreEvent(
+                    layoutName: layoutToApply.name,
+                    screenConfiguration: currentConfig,
+                    status: .completed,
+                    windowsTotal: layoutToApply.windows.count,
+                    windowsRestored: restoreResult.windowsRestored
+                ))
+                let missingIDs = RestoreResultMapping.retryableMissingIDs(
+                    in: layoutToApply.windows,
+                    results: restoreResult.windowsResults
+                )
+                self.pendingNotificationLayoutName = layoutToApply.name
+                self.pendingNotificationStatuses = Dictionary(uniqueKeysWithValues: restoreResult.windowsResults.map { ($0.id, $0.status) })
+                if missingIDs.isEmpty {
+                    self.finishRestoreNotification(layout: layoutToApply)
+                } else {
+                    self.scheduleRetryIfNeeded(layout: layoutToApply, missingIDs: missingIDs, windowService: windowService)
+                }
             }
         } else {
             print("[ScreenMonitor] No matching layout found for current screen configuration")
@@ -277,6 +284,7 @@ class ScreenMonitorService: ObservableObject {
         case .retry:
             break
         }
+        let windowGeneration = windowService.restoreGeneration
         let id = UUID()
         retryID = id
         retryWorkItem?.cancel()
@@ -284,7 +292,7 @@ class ScreenMonitorService: ObservableObject {
             guard let self,
                   self.retryID == id,
                   self.autoApplyRetryPolicy.acceptsCallback(generation: generation),
-                  let windowService else { return }
+                  let windowService, windowService.restoreGeneration == windowGeneration else { return }
             guard self.isAutoApplyEnabled else {
                 self.autoApplyRetryPolicy.setAutoApplyEnabled(false)
                 self.finishRestoreNotification(layout: layout)
@@ -295,16 +303,21 @@ class ScreenMonitorService: ObservableObject {
                 self.pendingNotificationStatuses.removeAll()
                 return
             }
-            let result = windowService.restoreLayout(layout, windowIDs: missingIDs)
-            for windowResult in result.windowsResults where missingIDs.contains(windowResult.id) {
-                self.pendingNotificationStatuses[windowResult.id] = windowResult.status
+            windowService.restoreLayout(layout, windowIDs: missingIDs, shouldContinue: { [weak self] in
+                guard let self else { return false }
+                return self.isAutoApplyEnabled && self.autoApplyRetryPolicy.acceptsCallback(generation: generation)
+            }) { result in
+                guard self.autoApplyRetryPolicy.acceptsCallback(generation: generation) else { return }
+                for windowResult in result.windowsResults where missingIDs.contains(windowResult.id) {
+                    self.pendingNotificationStatuses[windowResult.id] = windowResult.status
+                }
+                let orderedMissing = layout.windows.filter { missingIDs.contains($0.id) }
+                let stillMissing = RestoreResultMapping.retryableMissingIDs(
+                    in: orderedMissing,
+                    results: result.windowsResults
+                )
+                self.scheduleRetryIfNeeded(layout: layout, missingIDs: stillMissing, windowService: windowService)
             }
-            let orderedMissing = layout.windows.filter { missingIDs.contains($0.id) }
-            let stillMissing = RestoreResultMapping.retryableMissingIDs(
-                in: orderedMissing,
-                results: result.windowsResults
-            )
-            self.scheduleRetryIfNeeded(layout: layout, missingIDs: stillMissing, windowService: windowService)
         }
         retryWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: workItem)
@@ -341,7 +354,8 @@ class ScreenMonitorService: ObservableObject {
             autoApplyEnabled: isAutoApplyEnabled
         ) else { return }
         let restored = pendingNotificationStatuses.values.filter { $0 == .positionSet }.count
-        let summary = "\(restored)/\(layout.windows.count) windows restored"
+        let fullscreenFailures = pendingNotificationStatuses.values.filter { $0.isFullscreenFailure }.count
+        let summary = "\(restored)/\(layout.windows.count) windows restored • Fullscreen failures: \(fullscreenFailures)"
         pendingNotificationLayoutName = nil
         pendingNotificationStatuses.removeAll()
         retryWorkItem = nil
